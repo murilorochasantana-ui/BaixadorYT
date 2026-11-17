@@ -63,6 +63,17 @@ def matar_arvore(proc):
         proc.kill()
 
 
+def matar_ffmpegs_filhos():
+    """Encerra os ffmpeg abertos POR este programa (ex.: os que o yt-dlp inicia por dentro e que ele
+    não deixa cancelar). Só mexe nos filhos diretos deste processo, nunca em outros ffmpeg do PC."""
+    if os.name != "nt":
+        return
+    script = (f"Get-CimInstance Win32_Process -Filter \"ParentProcessId={os.getpid()} AND Name='ffmpeg.exe'\" | "
+              "ForEach-Object { taskkill /F /T /PID $_.ProcessId | Out-Null }")
+    subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **SEM_JANELA)
+
+
 def rodar_cancelavel(cmd, checar=lambda: None, ao_ler_linha=None):
     """Roda um comando checando a cada 0,25 s se o usuário pausou/cancelou.
     `checar` lança exceção para parar: o processo (e os filhos) é encerrado na hora.

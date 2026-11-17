@@ -127,7 +127,28 @@
     </section>
 
     <!-- ===================== EM BREVE ===================== -->
-    <section class="tela" id="tela-arquivos"><div class="em-breve"><h1>📁 Arquivos</h1><p>Explorador da pasta do canal ao vivo, com prévia dos vídeos.</p><span class="selo">Chega na Fase 2</span></div></section>
+    <!-- ===================== ARQUIVOS ===================== -->
+    <section class="tela" id="tela-arquivos">
+      <header class="cabecalho linha-titulo">
+        <div>
+          <h1>Arquivos do canal</h1>
+          <p class="suave" id="arq-subtitulo">As pastas do canal, ao vivo: o que está baixando aparece aqui na hora.</p>
+        </div>
+        <div class="linha">
+          <button class="btn cinza" id="arq-atualizar" title="Reler as pastas">↻ Atualizar</button>
+          <button class="btn cinza" id="arq-abrir-raiz">📂 Abrir pasta do canal</button>
+        </div>
+      </header>
+      <div id="arq-erro" class="cartao escondido"></div>
+      <div class="arquivos" id="arq-corpo">
+        <div class="cartao arvore-cartao">
+          <ul id="arvore" class="arvore" role="tree" tabindex="0"></ul>
+        </div>
+        <div class="cartao previa-arq" id="previa-arq">
+          <div class="vazio">Clique num arquivo para ver a prévia.</div>
+        </div>
+      </div>
+    </section>
     <section class="tela" id="tela-cronograma"><div class="em-breve"><h1>📅 Cronograma</h1><p>Calendário com arrastar e soltar e postagem no YouTube e no TikTok.</p><span class="selo">Chega na Fase 6</span></div></section>
     <section class="tela" id="tela-editor"><div class="em-breve"><h1>✂️ Editor</h1><p>Cortar, vertical 9:16 e Modelo ViceCityDay com um clique.</p><span class="selo">Chega na Fase 3</span></div></section>
     <section class="tela" id="tela-chat"><div class="em-breve"><h1>💬 Claude</h1><p>Converse com o Claude e peça cortes, títulos e agendamentos.</p><span class="selo">Chega na Fase 4</span></div></section>
@@ -144,5 +165,6 @@
   </div>
 
   <script src="js/app.js"></script>
+  <script src="js/explorador.js"></script>
 </body>
 </html>

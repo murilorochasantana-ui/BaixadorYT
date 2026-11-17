@@ -24,7 +24,8 @@ import subprocess
 import threading
 import time
 
-from .ffmpeg import SEM_JANELA, exe_ffmpeg, exe_ffprobe, rodar_cancelavel
+from .controle import Interrompido
+from .ffmpeg import SEM_JANELA, exe_ffmpeg, exe_ffprobe, matar_ffmpegs_filhos, rodar_cancelavel
 
 BLOCO = 4 << 20            # 4 MB por pedido
 PARALELOS = 6              # pedidos ao mesmo tempo
@@ -351,13 +352,16 @@ class Trecho:
     Retorna (arquivo_final, inicio_real, fim). Lança a exceção de `checar` para pausar/cancelar.
     `avisar(status, pct, vel, eta)` mostra o progresso."""
 
-    def __init__(self, ydl, info, base_saida, inicio, fim, checar, avisar, codec_convertido=None, opcoes_inteiro=None):
+    def __init__(self, ydl, info, base_saida, inicio, fim, checar, avisar, codec_convertido=None, opcoes_inteiro=None,
+                 ao_fallback=lambda motivo: None):
         self.ydl, self.info, self.base = ydl, info, base_saida
         self.inicio, self.fim = inicio or 0.0, fim
         self.checar, self.avisar = checar, avisar
         self.formatos = info.get("requested_formats") or [info]
         self.codec = codec_convertido
         self.opcoes_inteiro = opcoes_inteiro or {}
+        self.ao_fallback = ao_fallback        # chamado com o motivo quando o método rápido falha
+        self.saida_real = None                 # caminho final (o método do yt-dlp pode mudar a extensão)
         self.pasta_tmp = base_saida + ".trecho-tmp"
         duracao = info.get("duration")
         if duracao and self.inicio >= duracao:
@@ -372,18 +376,27 @@ class Trecho:
     def baixar(self):
         os.makedirs(self.pasta_tmp, exist_ok=True)
         caminho = caminho_para(self.formatos)
-        if caminho == "indice":
-            try:
+        try:
+            if caminho == "indice":
                 inicio_real = self._por_indice()
-            except SemIndice:
+            elif caminho == "hls":
+                inicio_real = self._hls()
+            else:
                 inicio_real = self._inteiro()
-        elif caminho == "hls":
-            inicio_real = self._hls()
-        else:
-            inicio_real = self._inteiro()
+        except Interrompido:
+            raise                      # pausar/cancelar nunca vira "fallback"
+        except Exception as e:
+            if caminho == "inteiro":   # já era o último recurso: não há para onde voltar
+                raise
+            # O método rápido falhou (YouTube mudou o índice, 403, rede, arquivo inesperado...):
+            # volta sozinho para o método do yt-dlp, mais lento, mas que funciona.
+            self.ao_fallback(f"{type(e).__name__}: {e}"[:200])
+            shutil.rmtree(self.pasta_tmp, ignore_errors=True)
+            os.makedirs(self.pasta_tmp, exist_ok=True)
+            self.checar()
+            inicio_real = self._ytdlp()
         shutil.rmtree(self.pasta_tmp, ignore_errors=True)
-        return self.saida, inicio_real, self.fim
-
+        return self.saida_real or self.saida, inicio_real, self.fim
     def apagar_temporarios(self):
         """Cancelar: apaga os pedaços e qualquer arquivo pela metade."""
         shutil.rmtree(self.pasta_tmp, ignore_errors=True)
@@ -397,6 +410,7 @@ class Trecho:
 
     def _finalizar(self, pecas):
         """Corta as peças e, se for MP3/WAV, converte."""
+        self.saida_real = self.saida
         if self.codec in AUDIO_CONVERTIDO:
             intermediario = os.path.join(self.pasta_tmp, "audio_cortado.m4a")
             inicio_real = cortar(pecas, self.inicio, self.fim, intermediario, self.checar, self.avisar)
@@ -499,6 +513,55 @@ class Trecho:
         finally:
             self.inicio, self.fim = pedido_inicio, pedido_fim
         return pedido_inicio
+
+    # ---------- plano B: o próprio yt-dlp (mais lento) ----------
+    def _ytdlp(self):
+        """Trecho pelo `download_ranges` do yt-dlp (o ffmpeg lê o site e recodifica o trecho: lento, mas
+        não depende do índice do YouTube). Roda numa thread para dar para pausar/cancelar: ao
+        interromper, os ffmpeg que o yt-dlp abriu são encerrados."""
+        import threading
+        import yt_dlp
+        from yt_dlp.utils import download_range_func
+        self.avisar("Método rápido indisponível: usando o método do yt-dlp (mais lento)...", 0, "", "")
+        fim = self.fim if self.fim is not None else float("inf")
+        opcoes = {**self.opcoes_inteiro, "outtmpl": os.path.join(self.pasta_tmp, "ytdlp.%(ext)s"),
+                  "postprocessors": [], "writethumbnail": False, "progress_hooks": [], "postprocessor_hooks": [],
+                  "download_ranges": download_range_func(None, [(self.inicio, fim)]),
+                  "force_keyframes_at_cuts": True}
+        resultado, erro = {}, []
+
+        def trabalho():
+            try:
+                with yt_dlp.YoutubeDL(opcoes) as y:
+                    resultado["info"] = y.process_ie_result(dict(self.info), download=True)
+            except BaseException as e:   # entregue à thread principal
+                erro.append(e)
+        fio = threading.Thread(target=trabalho, daemon=True)
+        fio.start()
+        try:
+            while fio.is_alive():
+                self.checar()
+                self.avisar("Baixando o trecho pelo yt-dlp (mais lento)...", None, "", "")
+                fio.join(0.25)
+        except BaseException:
+            matar_ffmpegs_filhos()
+            fio.join(timeout=15)
+            raise
+        if erro:
+            raise erro[0]
+        baixado = ((resultado.get("info") or {}).get("requested_downloads") or [{}])[-1].get("filepath")
+        if not baixado or not os.path.exists(baixado):
+            achados = [os.path.join(self.pasta_tmp, x) for x in os.listdir(self.pasta_tmp) if x.startswith("ytdlp.")]
+            baixado = max(achados, key=os.path.getsize) if achados else None
+        if not baixado:
+            raise RuntimeError("O yt-dlp não entregou o trecho. Tente de novo ou baixe o vídeo inteiro.")
+        if self.codec in AUDIO_CONVERTIDO:
+            self.saida_real = self.saida
+            converter_audio(baixado, self.saida, self.codec, self.checar, self.avisar)
+        else:
+            self.saida_real = f"{self.base}{os.path.splitext(baixado)[1]}"
+            os.replace(baixado, self.saida_real)
+        return self.inicio                 # o corte do yt-dlp é exato: começa onde foi pedido
 
     # ---------- caminho 3: inteiro + corte ----------
     def _inteiro(self):

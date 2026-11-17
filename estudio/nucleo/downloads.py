@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 import yt_dlp
 
+from .controle import Interrompido  # noqa: F401  (reexportado: os testes importam daqui)
 from .divisao import dividir
 from .erros import explicar_erro, limpar_mensagem
 from .ffmpeg import pasta_ffmpeg
@@ -31,13 +32,6 @@ from .transcricao import gerar_transcricao, gravar_falha
 EXTS_MIDIA = (".mp4", ".mkv", ".webm", ".mp3", ".m4a", ".opus", ".wav")
 MAX_PARALELOS = 4
 _contador = itertools.count(1)
-
-
-class Interrompido(Exception):
-    """Lançada dentro dos ganchos do yt-dlp quando o usuário pausa ou cancela."""
-    def __init__(self, motivo):
-        super().__init__(f"interrompido: {motivo}")
-        self.motivo = motivo
 
 
 @dataclass
@@ -306,7 +300,8 @@ class Gerenciador:
                 pct = feito * 100 / total if total else 0
                 rotulo = "Baixando o vídeo para cortar" if pedido.tem_trecho else ""
                 enviar(estado="baixando", status=f"{rotulo} {pct:.0f}%".strip(), pct=pct,
-                       vel=(d.get("_speed_str") or "").strip(), eta=(d.get("_eta_str") or "").strip())
+                       vel=(d.get("_speed_str") or "").strip(), eta=(d.get("_eta_str") or "").strip(),
+                       arquivo_parcial=d.get("tmpfilename"))   # o explorador mostra o progresso no .part
             elif d["status"] == "finished":
                 enviar(status="Juntando...", pct=100)
 
@@ -321,7 +316,9 @@ class Gerenciador:
 
         def avisar_trecho(status, pct=None, vel="", eta=""):
             checar()
-            enviar(estado="baixando", status=status, pct=pct, vel=vel or None, eta=eta or None)
+            tr = self.trechos.get(pedido.id)
+            enviar(estado="baixando", status=status, pct=pct, vel=vel or None, eta=eta or None,
+                   arquivo_parcial=getattr(tr, "pasta_tmp", None))
 
         arquivos_finais = []
         trecho = None
@@ -346,7 +343,10 @@ class Gerenciador:
                     base = os.path.splitext(ydl.prepare_filename(item))[0]
                     tr = Trecho(ydl, item, base, pedido.inicio, pedido.fim, checar, avisar_trecho,
                                 codec_convertido(opcoes_qualidade(pedido.qualidade, pedido.formato_avancado)),
-                                opcoes_inteiro=opcoes)
+                                opcoes_inteiro=opcoes,
+                                ao_fallback=lambda motivo: enviar(
+                                    aviso="O método rápido de trecho falhou e o Estúdio usou o do yt-dlp "
+                                          "(mais lento, mas funciona).", aviso_tecnico=motivo))
                     self.trechos[pedido.id] = tr
                     arq, inicio_real, fim_real = tr.baixar()
                     trecho = (inicio_real, fim_real)

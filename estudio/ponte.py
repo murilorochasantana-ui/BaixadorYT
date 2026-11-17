@@ -15,6 +15,8 @@ import time
 import yt_dlp
 
 from nucleo import config
+from nucleo import explorador
+from nucleo.controle import Interrompido
 from nucleo.downloads import Gerenciador, Pedido
 from nucleo.erros import explicar_erro, limpar_mensagem
 from nucleo.ffmpeg import ffmpeg_disponivel
@@ -27,6 +29,7 @@ from nucleo.qualidades import AVANCADO, ORDEM, nome_valido
 from nucleo.sistema import abrir, ler_area_transferencia, mostrar_no_explorer
 from nucleo.tempos import formatar_tempo, tempo_do_link, validar_trecho
 from nucleo.transcricao import whisper_disponivel
+from servidor_midia import ServidorMidia
 
 AVISO_LINK = "Cole um link do YouTube, TikTok, Instagram, Twitch, Pinterest ou Facebook."
 
@@ -43,11 +46,20 @@ class Ponte:
             self._historico = None                   # sem histórico o resto continua funcionando
         self._downloads = Gerenciador(self._eventos.put, self._cfg.get("downloads_paralelos", 2),
                                       historico=self._historico, ao_terminar=self._avisar_fim)
+        # explorador (Fase 2): servidor de mídia local, vigia das pastas e prévias em andamento
+        self._midia = ServidorMidia(lambda p: explorador.dentro_de(p, self._raizes_permitidas()))
+        self._vigia = explorador.Vigia(lambda pastas: self._eventos.put({"tipo": "arquivos", "pastas": pastas}))
+        self._previas_gerando = {}
+
+    def _raizes_permitidas(self):
+        """Pastas que a interface pode ler: a do canal, a de downloads e o cache de prévias."""
+        return explorador.raizes_do_canal(self._cfg) + [str(config.pasta_dados() / "previas")]
 
     # ---------- ligação com a janela ----------
     def _ligar(self, janela):
         self._janela = janela
         threading.Thread(target=self._entregar_eventos, daemon=True, name="eventos").start()
+        self._vigia.iniciar(explorador.raizes_do_canal(self._cfg))
 
     def _entregar_eventos(self):
         while True:
@@ -261,6 +273,101 @@ class Ponte:
         if self._historico:
             self._historico.apagar(registro)
         return True
+
+    # ---------- explorador (Fase 2) ----------
+    def explorador_raizes(self):
+        """Pastas que aparecem na árvore. Se a pasta do canal não existir, avisa como resolver."""
+        raiz = str(config.pasta_do_canal(self._cfg))
+        raizes = explorador.raizes_do_canal(self._cfg)
+        return {"raizes": [{"nome": os.path.basename(r.rstrip("\\/")) or r, "caminho": r} for r in raizes],
+                "protegidas": [], "vigia": self._vigia.disponivel,
+                "erro": None if raizes else f"Não achei a pasta do canal:\n{raiz}\n\n"
+                                            "Escolha onde ela está para ver os seus arquivos."}
+
+    def escolher_pasta_canal(self):
+        import webview
+        r = self._janela.create_file_dialog(webview.FileDialog.FOLDER, directory=str(config.pasta_do_canal(self._cfg)))
+        if not r:
+            return None
+        self.salvar_config({"pasta_raiz": os.path.normpath(r[0] if isinstance(r, (list, tuple)) else r)})
+        self._vigia.iniciar(explorador.raizes_do_canal(self._cfg))
+        return self.explorador_raizes()
+
+    def _permitido(self, caminho):
+        return explorador.dentro_de(caminho, explorador.raizes_do_canal(self._cfg))
+
+    def listar_pasta(self, caminho):
+        if not self._permitido(caminho):
+            return {"ok": False, "erro": "Essa pasta está fora da pasta do canal."}
+        try:
+            return {"ok": True, **explorador.listar(caminho)}
+        except FileNotFoundError:
+            return {"ok": False, "erro": "Essa pasta não existe mais.", "sumiu": True}
+        except OSError as e:
+            return {"ok": False, "erro": f"Não consegui abrir a pasta: {e}"}
+
+    def info_arquivo(self, caminho):
+        """Dados para a prévia: tamanho, duração, codecs, texto, e a URL para tocar/mostrar."""
+        if not self._permitido(caminho):
+            return {"ok": False, "erro": "Esse arquivo está fora da pasta do canal."}
+        try:
+            d = explorador.descrever(caminho)
+        except FileNotFoundError:
+            return {"ok": False, "erro": "Esse arquivo não existe mais.", "sumiu": True}
+        except OSError as e:
+            return {"ok": False, "erro": f"Não consegui ler o arquivo: {e}"}
+        if d["tipo"] in ("imagem",) or (d["tipo"] in ("video", "audio") and d.get("toca_direto")):
+            d["url"] = self._midia.url(caminho)
+        if d["tipo"] in ("video", "audio") and not d.get("toca_direto"):
+            previa = explorador.caminho_previa(caminho)
+            if os.path.exists(previa):
+                d["url_previa"] = self._midia.url(previa)
+        return {"ok": True, "info": d}
+
+    def gerar_previa(self, caminho):
+        """Gera a prévia leve (540p) de um vídeo que o Estúdio não toca direto. Avisa por evento."""
+        if not self._permitido(caminho) or not os.path.isfile(caminho):
+            return {"ok": False, "erro": "Arquivo não encontrado."}
+        if caminho in self._previas_gerando:
+            return {"ok": True}
+        self._previas_gerando[caminho] = True
+
+        def trabalho():
+            ev = {"tipo": "previa", "caminho": caminho}
+            try:
+                destino = explorador.gerar_previa(
+                    caminho, lambda pct: self._eventos.put({**ev, "estado": "gerando", "pct": pct}))
+                self._eventos.put({**ev, "estado": "pronta", "url": self._midia.url(destino)})
+            except Exception as e:
+                self._eventos.put({**ev, "estado": "erro", "erro": f"Não consegui gerar a prévia: {e}"})
+            finally:
+                self._previas_gerando.pop(caminho, None)
+        threading.Thread(target=trabalho, daemon=True, name="previa").start()
+        return {"ok": True}
+
+    def abrir_arquivo(self, caminho):
+        """Abre no programa padrão do Windows (vídeo no player, .md no editor...)."""
+        if not self._permitido(caminho) or not os.path.exists(caminho):
+            return {"ok": False, "erro": "Arquivo não encontrado."}
+        try:
+            abrir(caminho)
+            return {"ok": True}
+        except OSError as e:
+            return {"ok": False, "erro": f"O Windows não conseguiu abrir: {e}"}
+
+    def mostrar_no_explorer(self, caminho):
+        if not self._permitido(caminho) or not os.path.exists(caminho):
+            return {"ok": False, "erro": "Arquivo não encontrado."}
+        mostrar_no_explorer(caminho)
+        return {"ok": True}
+
+    def mover_para_lixeira(self, caminho):
+        """Manda para a Lixeira do Windows (nunca apaga direto) e recusa pastas da estrutura do canal."""
+        try:
+            explorador.para_lixeira(caminho, self._cfg)
+            return {"ok": True}
+        except ValueError as e:
+            return {"ok": False, "erro": str(e)}
 
     # ---------- arquivos ----------
     def abrir_pasta(self, caminho):

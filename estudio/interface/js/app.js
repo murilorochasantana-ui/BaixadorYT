@@ -393,10 +393,11 @@ function itemDaFila(id) {
   const barra = el("div");
   const detalhe = el("div", { className: "item-detalhe" });
   const acoes = el("div", { className: "item-acoes" });
+  const aviso = el("div", { className: "item-aviso escondido" });
   const li = el("li", { className: "item" }, el("div", { className: "item-topo" }, titulo, status),
-    el("div", { className: "barra" }, barra), detalhe, acoes);
+    el("div", { className: "barra" }, barra), detalhe, aviso, acoes);
   $("#fila").prepend(li);
-  it = { id, li, titulo, status, barra, detalhe, acoes, estado: "fila", ultimo: {} };
+  it = { id, li, titulo, status, barra, detalhe, aviso, acoes, estado: "fila", ultimo: {} };
   estado.itens.set(id, it);
   $("#fila-vazia").classList.add("escondido");
   return it;
@@ -453,12 +454,16 @@ window.estudio = {
   receber(lote) {
     let terminou = false;
     for (const ev of lote) {
+      if (ev.tipo === "arquivos") { window.explorador && window.explorador.alterados(ev.pastas); continue; }
+      if (ev.tipo === "previa") { window.explorador && window.explorador.previaEvento(ev); continue; }
       if (ev.tipo !== "download") continue;
+      if (ev.arquivo_parcial && window.explorador) window.explorador.progresso(ev.arquivo_parcial, ev.pct);
       const it = itemDaFila(ev.id);
       if (ev.titulo) { it.titulo.textContent = ev.titulo; it.titulo.title = ev.titulo; }
       if (ev.status) it.status.textContent = ev.status;
       if (ev.pct != null) it.barra.style.width = `${Math.max(0, Math.min(100, ev.pct))}%`;
       if (ev.vel) it.detalhe.textContent = `${ev.vel} • falta ${ev.eta || "?"}`;
+      if (ev.aviso) { it.aviso.textContent = `ℹ ${ev.aviso}`; it.aviso.title = ev.aviso_tecnico || ""; it.aviso.classList.remove("escondido"); }
       Object.assign(it.ultimo, ev);
       if (ev.estado && ev.estado !== it.estado || !it.acoes.childElementCount) {
         it.estado = ev.estado;

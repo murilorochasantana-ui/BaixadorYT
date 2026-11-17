@@ -19,7 +19,7 @@ if not defined PY (
 )
 
 echo [1/4] Instalando yt-dlp, ffmpeg e a janela do Estudio...
-%PY% -m pip install -U "yt-dlp[default,curl-cffi]" imageio-ffmpeg pywebview
+%PY% -m pip install -U "yt-dlp[default,curl-cffi]" imageio-ffmpeg pywebview watchdog send2trash
 if errorlevel 1 (
   echo.
   echo [!] A instalacao falhou. Confira a internet e rode o instalar.bat de novo.

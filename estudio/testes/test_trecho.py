@@ -184,6 +184,130 @@ def test_cancelar_apaga_tudo(tmp_path, arquivos, monkeypatch):
     assert [x for x in os.listdir(tmp_path)] == []               # nada sobrando na pasta
 
 
+# ---------- plano B: se o método rápido falhar, usa o yt-dlp ----------
+class YoutubeDLFalso:
+    """Faz o papel do yt-dlp no plano B: entrega o trecho já cortado e guarda as opções recebidas."""
+    opcoes = None
+    bloquear = None          # Event: se definido, o "download" fica preso até o teste soltar
+    pronto = None            # arquivo local que será "baixado"
+
+    def __init__(self, opcoes):
+        type(self).opcoes = opcoes
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def process_ie_result(self, info, download=True):
+        if type(self).bloquear is not None:
+            type(self).bloquear.wait(10)
+            raise RuntimeError("encerrado")
+        destino = type(self).opcoes["outtmpl"].replace("%(ext)s", "mp4")
+        import shutil
+        shutil.copy(type(self).pronto, destino)
+        return {"requested_downloads": [{"filepath": destino}]}
+
+
+@pytest.fixture
+def plano_b(tmp_path, monkeypatch):
+    import yt_dlp
+    pronto = str(tmp_path / "pronto.mp4")
+    _ff("-f", "lavfi", "-i", "testsrc=s=320x240:r=25:d=12", "-f", "lavfi", "-i", "sine=d=12",
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", pronto)
+    YoutubeDLFalso.opcoes, YoutubeDLFalso.bloquear, YoutubeDLFalso.pronto = None, None, pronto
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", YoutubeDLFalso)
+    return YoutubeDLFalso
+
+
+def _trecho_b(tmp_path, arquivos, ydl, inicio=21, fim=33, checar=lambda: None, codec=None, fmts=None):
+    info = {"id": "x", "title": "t", "duration": 60, "requested_formats": fmts or _formatos(*arquivos)}
+    motivos, avisos = [], []
+    tr = T.Trecho(ydl, info, str(tmp_path / "Live (trecho)"), inicio, fim, checar,
+                  lambda s, p=None, v="", e="": avisos.append(s), codec, {"format": "x"}, motivos.append)
+    return tr, motivos, avisos
+
+
+class YDLQueFalha(YDLFalso):
+    def __init__(self, erro):
+        super().__init__({})
+        self.erro = erro
+
+    def urlopen(self, req):
+        raise self.erro
+
+
+def test_403_do_youtube_volta_sozinho_para_o_ytdlp(tmp_path, arquivos, plano_b):
+    ydl = YDLQueFalha(OSError("HTTP Error 403: Forbidden"))
+    tr, motivos, avisos = _trecho_b(tmp_path, arquivos, ydl)
+    saida, inicio_real, fim = tr.baixar()
+    assert os.path.exists(saida) and saida.endswith("Live (trecho).mp4") and duracao(saida) == pytest.approx(12, abs=0.2)
+    assert len(motivos) == 1 and "403" in motivos[0]                # avisou o motivo (para o aviso discreto)
+    assert inicio_real == 21 and fim == 33                           # o corte do yt-dlp é exato
+    faixa = list(plano_b.opcoes["download_ranges"]({"id": "x", "duration": 60}, None))
+    assert faixa == [{"start_time": 21, "end_time": 33}]             # pediu o trecho certo ao yt-dlp
+    assert plano_b.opcoes["force_keyframes_at_cuts"] is True
+    assert not os.path.exists(tr.pasta_tmp)                          # sem sobras
+
+
+def test_indice_diferente_do_esperado_tambem_cai_no_ytdlp(tmp_path, arquivos, plano_b):
+    class Lixo(YDLQueFalha):
+        def urlopen(self, req):
+            return Resposta(b"\x00" * 4096)                          # o YouTube mudou o formato
+    tr, motivos, _ = _trecho_b(tmp_path, arquivos, Lixo(None))
+    saida, _i, _f = tr.baixar()
+    assert os.path.exists(saida) and motivos and "SemIndice" in motivos[0]
+
+
+def test_rede_caindo_no_meio_tambem_cai_no_ytdlp(tmp_path, arquivos, plano_b, monkeypatch):
+    ydl = YDLFalso({"http://falso/v": arquivos[0], "http://falso/a": arquivos[1]})
+    monkeypatch.setattr(T, "BLOCO", 32 << 10)
+    original = ydl.urlopen
+
+    def instavel(req):
+        if ydl.pedidos >= 2:            # depois de ler o índice dos dois arquivos, a rede cai nos blocos
+            raise ConnectionResetError("conexão encerrada")
+        return original(req)
+    ydl.urlopen = instavel
+    tr, motivos, _ = _trecho_b(tmp_path, arquivos, ydl, 5, 55)
+    saida, _i, _f = tr.baixar()
+    assert os.path.exists(saida) and motivos and "ConnectionResetError" in motivos[0]
+
+
+def test_pausar_ou_cancelar_nao_dispara_o_fallback(tmp_path, arquivos, plano_b):
+    def checar():
+        raise Interrompido("cancelar")
+    ydl = YDLFalso({"http://falso/v": arquivos[0], "http://falso/a": arquivos[1]})
+    tr, motivos, _ = _trecho_b(tmp_path, arquivos, ydl, checar=checar)
+    with pytest.raises(Interrompido):
+        tr.baixar()
+    assert motivos == [] and plano_b.opcoes is None                  # o yt-dlp nem foi chamado
+
+
+def test_cancelar_durante_o_ytdlp_encerra_os_ffmpeg_dele(tmp_path, arquivos, plano_b, monkeypatch):
+    import threading
+    plano_b.bloquear = threading.Event()
+    mortos = []
+    monkeypatch.setattr(T, "matar_ffmpegs_filhos", lambda: (mortos.append(1), plano_b.bloquear.set()))
+    inicio = time.time()
+
+    def checar():
+        if time.time() - inicio > 0.6:
+            raise Interrompido("cancelar")
+    tr, motivos, _ = _trecho_b(tmp_path, arquivos, YDLQueFalha(OSError("403")), checar=checar)
+    with pytest.raises(Interrompido):
+        tr.baixar()
+    assert mortos == [1] and time.time() - inicio < 5
+
+
+def test_ytdlp_com_audio_mp3(tmp_path, arquivos, plano_b):
+    tr, motivos, _ = _trecho_b(tmp_path, arquivos, YDLQueFalha(OSError("403")), codec="mp3",
+                               fmts=[_formatos(*arquivos)[1]])
+    saida, _i, _f = tr.baixar()
+    assert saida.endswith(".mp3") and fluxos(saida) == ["audio"]
+
+
 # ---------- processos ----------
 def test_ffmpeg_e_encerrado_na_hora_ao_cancelar():
     inicio = time.time()

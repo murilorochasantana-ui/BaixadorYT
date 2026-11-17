@@ -7,7 +7,7 @@ where py >nul 2>nul && py -3.12 -c "" >nul 2>nul && set "PY=py -3.12"
 if not defined PY set "PY=python"
 
 echo Atualizando o yt-dlp (resolve a maioria dos erros de download) e a janela do Estudio...
-%PY% -m pip install -U "yt-dlp[default,curl-cffi]" imageio-ffmpeg pywebview
+%PY% -m pip install -U "yt-dlp[default,curl-cffi]" imageio-ffmpeg pywebview watchdog send2trash
 echo.
 echo Pronto! Pode abrir o Estudio de novo.
 pause
