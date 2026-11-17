@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Estúdio ViceCityDay</title>
+  <link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+  <nav class="lateral">
+    <div class="marca">
+      <span class="marca-vcd">VCD</span>
+      <span class="marca-nome">Estúdio<br><small>ViceCityDay</small></span>
+    </div>
+    <button class="aba ativa" data-aba="baixar">⬇<span>Baixar</span></button>
+    <button class="aba" data-aba="arquivos">📁<span>Arquivos</span></button>
+    <button class="aba" data-aba="cronograma">📅<span>Cronograma</span></button>
+    <button class="aba" data-aba="editor">✂️<span>Editor</span></button>
+    <button class="aba" data-aba="chat">💬<span>Claude</span></button>
+    <button class="aba" data-aba="metricas">📊<span>Métricas</span></button>
+    <button class="aba" data-aba="config">⚙️<span>Configurações</span></button>
+    <div class="rodape-lateral" id="versao">carregando…</div>
+  </nav>
+
+  <main>
+    <!-- ===================== BAIXAR ===================== -->
+    <section class="tela ativa" id="tela-baixar">
+      <header class="cabecalho">
+        <h1>Baixar vídeo</h1>
+        <p class="suave">Cole o link, confira a prévia e baixe. Grátis, sem anúncios e sem limite de tamanho.</p>
+      </header>
+
+      <div class="colunas">
+        <div class="coluna-form">
+          <div class="cartao">
+            <label for="link">Link do vídeo <span class="suave">(YouTube, TikTok, Instagram, Twitch, Pinterest, Facebook)</span></label>
+            <div class="linha">
+              <input id="link" type="text" placeholder="https://..." autocomplete="off" spellcheck="false">
+              <button class="btn cinza" id="btn-colar">📋 Colar</button>
+            </div>
+
+            <div id="previa" class="previa escondido"></div>
+
+            <label for="pasta">Salvar em</label>
+            <div class="linha">
+              <input id="pasta" type="text" spellcheck="false">
+              <button class="btn cinza" id="btn-escolher">📁 Escolher</button>
+            </div>
+
+            <div class="grade2">
+              <div>
+                <label for="qualidade">Qualidade</label>
+                <select id="qualidade"></select>
+              </div>
+              <div>
+                <label for="login">Login (+18 / Instagram)</label>
+                <select id="login"></select>
+              </div>
+            </div>
+
+            <div id="avancado" class="avancado escondido">
+              <div class="suave pequeno" id="avancado-ajuda">Escolha um formato da lista (aparece depois da prévia).</div>
+              <div class="tabela-rolagem"><table id="tabela-formatos"></table></div>
+            </div>
+
+            <div class="opcoes">
+              <label class="marcar">
+                <input type="checkbox" id="modo-claude">
+                <span>📎 Modo Claude <span class="suave">(pasta por vídeo, partes de até</span></span>
+                <input type="number" id="limite" min="10" max="4000" step="50">
+                <span class="suave">MB)</span>
+              </label>
+              <label class="marcar">
+                <input type="checkbox" id="transcricao">
+                <span>📝 Transcrição <span class="suave">(.md + .json com tempo de cada palavra)</span></span>
+              </label>
+            </div>
+
+            <div class="linha botoes">
+              <button class="btn destaque grande" id="btn-baixar">⬇ BAIXAR</button>
+              <button class="btn cinza" id="btn-abrir">📂 Abrir pasta</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="coluna-fila">
+          <div class="cartao fila-cartao">
+            <div class="fila-topo">
+              <h2>Downloads</h2>
+              <span class="suave pequeno" id="fila-resumo">Nada na fila</span>
+            </div>
+            <ul id="fila" class="fila"></ul>
+            <div id="fila-vazia" class="vazio">Os vídeos que você baixar aparecem aqui.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== EM BREVE ===================== -->
+    <section class="tela" id="tela-arquivos"><div class="em-breve"><h1>📁 Arquivos</h1><p>Explorador da pasta do canal ao vivo, com prévia dos vídeos.</p><span class="selo">Chega na Fase 2</span></div></section>
+    <section class="tela" id="tela-cronograma"><div class="em-breve"><h1>📅 Cronograma</h1><p>Calendário com arrastar e soltar e postagem no YouTube e no TikTok.</p><span class="selo">Chega na Fase 6</span></div></section>
+    <section class="tela" id="tela-editor"><div class="em-breve"><h1>✂️ Editor</h1><p>Cortar, vertical 9:16 e Modelo ViceCityDay com um clique.</p><span class="selo">Chega na Fase 3</span></div></section>
+    <section class="tela" id="tela-chat"><div class="em-breve"><h1>💬 Claude</h1><p>Converse com o Claude e peça cortes, títulos e agendamentos.</p><span class="selo">Chega na Fase 4</span></div></section>
+    <section class="tela" id="tela-metricas"><div class="em-breve"><h1>📊 Métricas</h1><p>Views, retenção e YouTube × TikTok do mesmo vídeo.</p><span class="selo">Chega na Fase 5</span></div></section>
+    <section class="tela" id="tela-config"><div class="em-breve"><h1>⚙️ Configurações</h1><p>Modelo do Whisper, pastas do canal, contas conectadas.</p><span class="selo">Chega na Fase 7</span></div></section>
+  </main>
+
+  <div id="modal" class="modal escondido" role="dialog" aria-modal="true">
+    <div class="modal-caixa">
+      <h3 id="modal-titulo"></h3>
+      <div id="modal-texto"></div>
+      <div class="linha fim"><button class="btn destaque" id="modal-ok">OK</button></div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

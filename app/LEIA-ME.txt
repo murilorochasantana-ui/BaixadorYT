@@ -1,0 +1,62 @@
+BAIXADOR YT - APP
+=================
+Cole o link, escolha a pasta e clique em BAIXAR.
+Funciona com: YouTube, TikTok, Instagram, Twitch, Pinterest e Facebook. Sem extensão, sem servidor.
+
+INSTALAR (só uma vez)
+1. Dê dois cliques em instalar.bat
+   (se ele instalar o Python, feche e rode de novo).
+2. Vai aparecer o atalho "Baixador YT" na Área de Trabalho.
+
+USAR
+1. Copie o link do vídeo no YouTube.
+2. Abra o Baixador YT. Se o link já estiver copiado, ele cola sozinho.
+3. Clique em "Escolher" para mudar a pasta (padrão: D:\ViceCityDay).
+   O app lembra a última pasta e a última qualidade.
+4. Clique em BAIXAR. Pode colar vários links seguidos: eles entram na fila.
+
+MODO CLAUDE (opcional - marque a caixinha 📎)
+- Cria uma pasta para cada vídeo:  D:\ViceCityDay\Nome do Vídeo [id]\
+- Se o vídeo passar do limite (padrão 400 MB), ele é dividido em partes:
+    Nome do Vídeo - Parte 01.mp4, Parte 02.mp4, ...
+  Não perde qualidade (não recodifica) e cada parte toca normalmente.
+- Se couber no limite, fica um arquivo só, dentro da pasta.
+- Você pode mudar o limite no campo ao lado (em MB).
+
+LOGIN: vídeos +18, Instagram, Facebook, posts privados
+Em "Login (+18 / Instagram)", escolha o navegador onde você está logado no site.
+O Instagram quase sempre pede isso.
+- Firefox: o que funciona melhor (pode estar aberto).
+- Chrome/Edge/Brave/Opera: feche o navegador por completo antes de baixar.
+  O Chrome às vezes bloqueia; se der erro, use Firefox ou cookies.txt.
+- Arquivo cookies.txt: exporte com a extensão "Get cookies.txt LOCALLY"
+  estando no site (youtube.com, instagram.com...), e escolha o arquivo no app.
+Deixe em "Nenhum" para vídeos normais.
+
+TRANSCRIÇÃO (opcional - marque 📝 Transcrição)
+Cria um arquivo .md com o texto do vídeo inteiro, ao lado do vídeo
+(no Modo Claude, dentro da pasta do vídeo), com o tempo de cada trecho:
+  **[12:34]** o que foi falado...
+- YouTube: usa a legenda do vídeo (leva segundos).
+- Sem legenda (TikTok, Instagram, Twitch...): transcreve o áudio no seu PC
+  com o Whisper. Para isso, rode UMA VEZ o instalar_transcricao.bat.
+  Na primeira vez ele baixa o modelo (~460 MB). Vídeo longo demora:
+  um vídeo de 1 hora pode levar uns 15 a 40 min, dependendo do PC.
+- Quer mais rápido ou mais preciso? Abra o config.json (aparece depois do
+  primeiro uso) e troque "modelo_whisper": "small" por "base" (mais rápido)
+  ou "medium" (mais preciso, mais lento).
+
+DICAS POR SITE
+- TikTok: baixa sem marca d'água.
+- Instagram: Reels e posts; carrossel com vários vídeos baixa todos (até 20).
+- Twitch: VODs (aba Vídeos do canal) e clipes. Live acontecendo agora não.
+- Pinterest: só Pins de vídeo.
+- Facebook: vídeos e Reels públicos; privados precisam de login.
+
+QUALIDADES
+- Melhor qualidade: a maior que existir (4K/8K)
+- Para edição (H.264): abre direto no CapCut/Premiere (até 1080p)
+- Só áudio: MP3 320k
+
+SE ALGUM VÍDEO DER ERRO
+Rode o atualizar.bat (o YouTube muda direto e o yt-dlp precisa acompanhar).

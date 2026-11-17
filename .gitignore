@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Gerados em runtime pelo app antigo
+app/config.json
+app/bin/
+app/modelos/
+
+# Gerados em runtime pelo Estúdio (os dados do usuário ficam em %LOCALAPPDATA%\EstudioViceCityDay)
+estudio/bin/
+estudio/modelos/
+
+# Nunca versionar credenciais
+*.token
+client_secret*.json
+cookies*.txt

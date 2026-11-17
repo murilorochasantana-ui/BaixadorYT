@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "interface-estudio",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-3.12", "-m", "http.server", "8731", "--bind", "127.0.0.1", "--directory", "estudio/interface"],
+      "port": 8731
+    }
+  ]
+}
