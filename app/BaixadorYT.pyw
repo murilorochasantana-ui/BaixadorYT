@@ -126,6 +126,14 @@ def explicar_erro(msg, login):
                     "(o Firefox é o que funciona melhor) e tente de novo.")
         return ("Mesmo com o login, o YouTube não liberou. Confira se a conta logada nesse navegador "
                 "é maior de 18 anos e está entrando no YouTube normalmente.")
+    if any(x in m for x in ("unexpected response from webpage request", "unable to extract challenge data",
+                            "no impersonate target is available", "unable to solve js challenge")):
+        # o TikTok só libera para quem parece um navegador: precisa do curl_cffi ("yt-dlp[default,curl-cffi]")
+        return ("O TikTok bloqueou o download porque o programa não conseguiu se passar por um navegador.\n\n"
+                "Feche o programa, dê dois cliques no atualizar.bat (ele instala o componente que imita o "
+                "navegador) e tente de novo. Não precisa mudar o Login.\n\n"
+                "Se continuar falhando depois de atualizar, o TikTok mudou a proteção: espere 1 ou 2 dias por "
+                "uma versão nova do yt-dlp e rode o atualizar.bat outra vez.")
     if "is_live" in m or "live event" in m or "está ao vivo" in m:
         return msg
     if any(x in m for x in ("login required", "requested content is not available",

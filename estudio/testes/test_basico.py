@@ -44,6 +44,17 @@ def test_erro_formato_indisponivel_sugere_avancado():
     assert "Avançado" in explicar_erro("Requested format is not available", "Nenhum")
 
 
+@pytest.mark.parametrize("msg", [
+    "[TikTok] 7695574208843091206: Unexpected response from webpage request",
+    "[TikTok] 123: Unable to extract challenge data",
+    "The extractor is attempting impersonation, but no impersonate target is available",
+])
+def test_erro_tiktok_bloqueio_explica_atualizar(msg):
+    r = explicar_erro(msg, "Firefox")
+    assert "TikTok" in r and "atualizar.bat" in r and "navegador" in r
+    assert "Unexpected response" not in r          # nada de inglês para o usuário
+
+
 def test_erro_desconhecido_sugere_atualizar():
     assert "atualizar.bat" in explicar_erro("algo estranho", "Nenhum")
 

@@ -200,7 +200,7 @@ Converte os erros do yt-dlp em mensagens em português com a solução: restriç
 - Erros sempre amigáveis, explicando **o que fazer** (ver `explicar_erro`).
 - Nunca travar a interface: o trabalho pesado fica em threads e a comunicação com a UI acontece só pela `queue`.
 - Não salvar senhas. O login é feito só por cookies do navegador ou arquivo cookies.txt.
-- Preferir sempre `pip install -U "yt-dlp[default]"` (inclui o `yt-dlp-ejs`, necessário para o YouTube junto com o Deno).
+- Preferir sempre `pip install -U "yt-dlp[default,curl-cffi]"`. O `default` inclui o `yt-dlp-ejs`, necessário para o YouTube junto com o Deno. O `curl-cffi` permite ao yt-dlp se passar por um navegador (*impersonation*), e o **TikTok exige isso**: sem ele, todo vídeo do TikTok falha com "Unexpected response from webpage request", mesmo com login. Descoberto em 17/11/2026 com o yt-dlp 2026.10.26. O `explicar_erro` dos dois apps já traduz esse erro e manda rodar o `atualizar.bat`.
 - Manter tudo funcionando com duplo clique, sem terminal.
 - **Git e GitHub:** o repositório remoto é `origin` = https://github.com/murilorochasantana-ui/BaixadorYT.git, branch `main`. **Depois de cada commit de fase, fazer `git push origin main`.** Commits em português, um por fase (ou correção).
 - **Nunca enviar ao GitHub** (o `.gitignore` já cobre, mas confira antes de cada push com `git status --ignored` e `git ls-files`): `cookies.txt`, `config.json`, tokens, chaves de API, o JSON de credenciais do Google (`client_secret*.json`), a pasta `modelos/` do Whisper, `ffmpeg.exe`/`bin/` e qualquer vídeo ou áudio. Chaves e tokens ficam só no Cofre do Windows (`keyring`).

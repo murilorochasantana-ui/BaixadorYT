@@ -5,6 +5,7 @@ demorados (como a prévia) não travam a janela. Os eventos (progresso dos downl
 Python para a página por uma fila, entregue em lotes a cada 150 ms por `window.estudio.receber`.
 Atributos começam com "_" para o pywebview não expô-los ao JavaScript.
 """
+import importlib.util
 import json
 import os
 import queue
@@ -66,6 +67,8 @@ class Ponte:
             "versao_ytdlp": yt_dlp.version.__version__,
             "whisper": whisper_disponivel(),
             "ffmpeg": ffmpeg_disponivel(),
+            # componente que faz o yt-dlp parecer um navegador (o TikTok exige)
+            "imita_navegador": importlib.util.find_spec("curl_cffi") is not None,
             "link_colado": colado if link_valido(colado) else "",
         }
 

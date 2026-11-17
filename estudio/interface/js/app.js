@@ -68,8 +68,9 @@ async function iniciar() {
   const avisos = [];
   if (!ini.ffmpeg) avisos.push("ffmpeg não encontrado");
   if (!ini.whisper) avisos.push("Whisper não instalado");
+  if (!ini.imita_navegador) avisos.push("TikTok vai falhar: rode o atualizar.bat");
   $("#versao").textContent = `yt-dlp ${ini.versao_ytdlp}` + (avisos.length ? ` • ${avisos.join(" • ")}` : "");
-  $("#versao").title = avisos.length ? "Rode o instalar.bat / instalar_transcricao.bat da pasta estudio." : "";
+  $("#versao").title = avisos.length ? "Rode o atualizar.bat / instalar_transcricao.bat da pasta estudio." : "";
 
   if (ini.link_colado) { $("#link").value = ini.link_colado; pedirPrevia(); }
   $("#link").focus();
