@@ -269,12 +269,37 @@ def whisper_disponivel():
         return False
 
 
+def carregar_audio(arquivo, taxa=16000):
+    """Lê o áudio com o ffmpeg (mono, 16 kHz) para o Whisper.
+    Não usa o PyAV: a versão 19 dele é incompatível com o faster-whisper 1.2.1."""
+    import numpy as np
+    extra = {"creationflags": 0x08000000} if os.name == "nt" else {}
+    r = subprocess.run([exe_ffmpeg(), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", arquivo,
+                        "-vn", "-ac", "1", "-ar", str(taxa), "-f", "s16le", "-"],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, **extra)
+    if r.returncode != 0:
+        raise RuntimeError("Não consegui ler o áudio do vídeo: " + r.stderr.decode(errors="ignore")[-300:])
+    return np.frombuffer(r.stdout, np.int16).astype(np.float32) / 32768.0
+
+
 def transcrever_whisper(arquivo, modelo, avisar):
+    """Tenta a placa de vídeo; se as bibliotecas CUDA não estiverem instaladas, usa o processador."""
+    avisar("Lendo o áudio...", 0)
+    audio = carregar_audio(arquivo)
+    try:
+        return _transcrever(audio, modelo, "auto", avisar)
+    except RuntimeError as e:
+        if not any(x in str(e).lower() for x in ("cublas", "cudnn", "cuda", "cudart")):
+            raise
+        return _transcrever(audio, modelo, "cpu", avisar)
+
+
+def _transcrever(audio, modelo, dispositivo, avisar):
     from faster_whisper import WhisperModel
     PASTA_MODELOS.mkdir(exist_ok=True)
     avisar("Carregando Whisper...", 0)
-    wm = WhisperModel(modelo, device="auto", compute_type="int8", download_root=str(PASTA_MODELOS))
-    segmentos, inf = wm.transcribe(arquivo, vad_filter=True, beam_size=1)
+    wm = WhisperModel(modelo, device=dispositivo, compute_type="int8", download_root=str(PASTA_MODELOS))
+    segmentos, inf = wm.transcribe(audio, vad_filter=True, beam_size=1)
     saida = []
     for sg in segmentos:
         saida.append((sg.start, sg.text.strip()))

@@ -226,9 +226,9 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - `estudio/instalar.bat`, `atualizar.bat` e `instalar_transcricao.bat` usam `py -3.12` (o PC também tem Python 3.15).
 - **Fica para a 1B:** vários links de uma vez, pausar/cancelar/retomar, downloads em paralelo, histórico (SQLite), baixar trecho (`?t=`), miniatura (`writethumbnail`) e notificação do Windows.
 
-### Problemas descobertos na 1A (valem também para o `app/` antigo)
-- **faster-whisper 1.2.1 + PyAV 19 são incompatíveis** (`av.open(... metadata_errors=...)` dá TypeError). O Estúdio não usa mais o PyAV: `transcricao.carregar_audio` lê o áudio com o ffmpeg (mono, 16 kHz, s16le → numpy). **O `app/` antigo continua com esse defeito** na transcrição pelo Whisper.
-- **O PC tem placa NVIDIA, mas não tem as bibliotecas CUDA** (`cublas64_12.dll`): `device="auto"` quebra. O Estúdio tenta `auto` e cai para `cpu` sozinho (`_erro_de_placa`). O `app/` antigo também quebra aqui.
+### Problemas descobertos na 1A (corrigidos no Estúdio e no `app/` antigo)
+- **faster-whisper 1.2.1 + PyAV 19 são incompatíveis** (`av.open(... metadata_errors=...)` dá TypeError). Nenhum dos dois apps usa mais o PyAV: `carregar_audio` lê o áudio com o ffmpeg (mono, 16 kHz, s16le → numpy) e entrega o array ao Whisper.
+- **O PC tem placa NVIDIA, mas não tem as bibliotecas CUDA** (`cublas64_12.dll`): `device="auto"` quebra. Os dois apps tentam `auto` e caem para `cpu` sozinhos.
 - O ícone da janela no Windows precisa ser `.ico` (`estudio/recursos/icone.ico`, gerado do `app/icone.png`). Um `.png` derruba a janela.
 - `Start-Process -WindowStyle Hidden` esconde a janela do pywebview; para testar, abra com `pythonw.exe` normalmente.
 
