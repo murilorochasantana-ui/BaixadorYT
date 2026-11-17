@@ -3,12 +3,13 @@ import glob
 import math
 import os
 
-from .ffmpeg import exe_ffmpeg, rodar
+from .ffmpeg import exe_ffmpeg, rodar_cancelavel
 
 
-def dividir(arquivo, duracao, limite_mb, avisar=lambda t: None):
+def dividir(arquivo, duracao, limite_mb, avisar=lambda t: None, checar=lambda: None):
     """Divide o arquivo em partes de no máximo limite_mb, sem perder qualidade (sem recodificar).
-    Retorna a lista de partes, ou [arquivo] se ele já couber."""
+    Retorna a lista de partes, ou [arquivo] se ele já couber.
+    `checar` pode lançar exceção (pausar/cancelar): o ffmpeg é encerrado na hora e as partes apagadas."""
     limite = limite_mb * 1024 * 1024
     tamanho = os.path.getsize(arquivo)
     if tamanho <= limite:
@@ -24,9 +25,14 @@ def dividir(arquivo, duracao, limite_mb, avisar=lambda t: None):
         avisar(f"Dividindo em {partes_n} partes...")
         seg = max(duracao / partes_n, 5) if duracao else 600
         modelo = os.path.join(pasta, f"{nome} - Parte %02d{ext}")
-        r = rodar([exe_ffmpeg(), "-hide_banner", "-y", "-i", arquivo, "-map", "0", "-c", "copy",
-                   "-f", "segment", "-segment_time", f"{seg:.2f}", "-segment_start_number", "1",
-                   "-reset_timestamps", "1", modelo])
+        try:
+            r = rodar_cancelavel([exe_ffmpeg(), "-hide_banner", "-y", "-nostdin", "-i", arquivo, "-map", "0",
+                                  "-c", "copy", "-f", "segment", "-segment_time", f"{seg:.2f}",
+                                  "-segment_start_number", "1", "-reset_timestamps", "1", modelo], checar)
+        except BaseException:
+            for velho in glob.glob(os.path.join(glob.escape(pasta), f"{glob.escape(nome)} - Parte *{ext}")):
+                os.remove(velho)
+            raise
         if r.returncode != 0:
             raise RuntimeError("O ffmpeg falhou ao dividir: " + r.stderr.decode(errors="ignore")[-300:])
         partes = sorted(glob.glob(os.path.join(glob.escape(pasta), f"{glob.escape(nome)} - Parte *{ext}")))

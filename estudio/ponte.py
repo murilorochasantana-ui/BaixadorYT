@@ -179,8 +179,15 @@ class Ponte:
         except OSError:
             return {"ok": False, "erro": f"Não consegui usar a pasta:\n{pasta}\n\nEscolha outra em \"Salvar em\"."}
 
+        # já está na fila agora? (evita a mesma entrada duas vezes, ex.: Enter + clique)
+        na_fila = [l for l in links if self._downloads.ja_na_fila(l, inicio, fim)]
+        if na_fila and len(na_fila) == len(links):
+            return {"ok": False, "erro": "Esse vídeo já está na fila de downloads." if len(links) == 1 else
+                    "Todos esses vídeos já estão na fila de downloads."}
+        links = [l for l in links if l not in na_fila]
+
         # já baixou antes?
-        pulados = 0
+        pulados = len(na_fila)
         if self._historico and dados.get("forcar") != "todos":
             repetidos = []
             for link in links:
@@ -192,7 +199,7 @@ class Ponte:
                 return {"ok": False, "duplicados": repetidos, "total": len(links)}
             if repetidos:
                 ja = {r["url"] for r in repetidos}
-                pulados = len(ja)
+                pulados += len(ja)
                 links = [l for l in links if l not in ja]
 
         try:

@@ -4,7 +4,7 @@
 const $ = (s) => document.querySelector(s);
 const estado = {
   avancado: "", previa: null, formato: null, pedidoPrevia: 0, itens: new Map(),
-  links: [], inicioAuto: false, temHistorico: false,
+  links: [], inicioAuto: false, temHistorico: false, linkAtual: "", enviando: false,
 };
 let api = null;
 
@@ -150,17 +150,21 @@ async function analisarLink() {
     info.classList.add("escondido");
   }
 
-  // início vindo do ?t= do link (só com um link)
-  if (r.inicio_link && (!$("#trecho-inicio").value || estado.inicioAuto)) {
-    $("#trecho-ativo").checked = true;
-    $("#trecho-inicio").value = r.inicio_texto;
-    estado.inicioAuto = true;
-    $("#trecho-ajuda").textContent = `O início (${r.inicio_texto}) veio do ?t= do link. Apague se quiser o vídeo inteiro.`;
-  } else if (!r.inicio_link && estado.inicioAuto) {
-    $("#trecho-ativo").checked = false;
-    $("#trecho-inicio").value = "";
-    estado.inicioAuto = false;
-    $("#trecho-ajuda").textContent = "Aceita 17:44, 1:02:30 ou segundos (1064).";
+  // início vindo do ?t= do link: só quando o link MUDA (editar o Início à mão tira o aviso)
+  const linkAgora = r.links.length === 1 ? r.links[0] : "";
+  if (linkAgora !== estado.linkAtual) {
+    estado.linkAtual = linkAgora;
+    ajudaTrechoPadrao();
+    if (r.inicio_link) {
+      $("#trecho-ativo").checked = true;
+      $("#trecho-inicio").value = r.inicio_texto;
+      estado.inicioAuto = true;
+      $("#trecho-ajuda").textContent = `O início (${r.inicio_texto}) veio do ?t= do link. Apague se quiser o vídeo inteiro.`;
+    } else if (estado.inicioAuto) {
+      $("#trecho-ativo").checked = false;
+      $("#trecho-inicio").value = "";
+      estado.inicioAuto = false;
+    }
   }
   atualizarTrecho();
 
@@ -240,16 +244,21 @@ function mostrarPrevia() {
 }
 
 // ---------- trecho ----------
+function ajudaTrechoPadrao() {
+  $("#trecho-ajuda").textContent = "Aceita 17:44, 1:02:30 ou segundos (1064).";
+}
 function atualizarTrecho() {
   $("#trecho").classList.toggle("escondido", !$("#trecho-ativo").checked);
   if ($("#trecho-ativo").checked && estado.links.length > 1) {
     $("#trecho-ajuda").textContent = "⚠ O trecho só funciona com um link por vez.";
+  } else if (estado.links.length > 1 || !estado.inicioAuto) {
+    ajudaTrechoPadrao();
   }
   mostrarPrevia();
 }
 $("#trecho-ativo").addEventListener("change", () => { estado.inicioAuto = false; atualizarTrecho(); });
 for (const id of ["#trecho-inicio", "#trecho-fim"]) {
-  $(id).addEventListener("input", () => { estado.inicioAuto = false; mostrarPrevia(); });
+  $(id).addEventListener("input", () => { estado.inicioAuto = false; ajudaTrechoPadrao(); mostrarPrevia(); });
 }
 
 // ---------- qualidade / avançado ----------
@@ -315,6 +324,18 @@ $("#notificacao").addEventListener("change", () => api.salvar_config({ notificac
 $("#btn-baixar").addEventListener("click", () => baixar());
 
 async function baixar(forcar = null) {
+  if (estado.enviando) return;            // Enter + clique (ou clique duplo) não manda duas vezes
+  estado.enviando = true;
+  $("#btn-baixar").disabled = true;
+  try {
+    await enviarDownload(forcar);
+  } finally {
+    estado.enviando = false;
+    $("#btn-baixar").disabled = false;
+  }
+}
+
+async function enviarDownload(forcar) {
   const qualidade = $("#qualidade").value;
   const f = estado.formato;
   const r = await api.baixar({
@@ -326,12 +347,12 @@ async function baixar(forcar = null) {
     miniatura: $("#miniatura").checked,
     trecho: { ativo: $("#trecho-ativo").checked, inicio: $("#trecho-inicio").value, fim: $("#trecho-fim").value },
   });
-  if (r.duplicados) { await perguntarRepetidos(r); return; }
+  if (r.duplicados) { const escolha = await perguntarRepetidos(r); if (escolha) await enviarDownload(escolha); return; }
   if (!r.ok) { avisar("Não deu para baixar", r.erro); return; }
 
   $("#link").value = "";
   ajustarAltura();
-  estado.previa = null; estado.formato = null; estado.links = [];
+  estado.previa = null; estado.formato = null; estado.links = []; estado.linkAtual = "";
   if (estado.inicioAuto) { $("#trecho-ativo").checked = false; $("#trecho-inicio").value = ""; estado.inicioAuto = false; }
   atualizarTrecho();
   $("#previa").classList.add("escondido");
@@ -360,8 +381,7 @@ async function perguntarRepetidos(r) {
     ? [{ rotulo: "Cancelar", valor: null }, { rotulo: "Baixar de novo", classe: "destaque", valor: "todos" }]
     : [{ rotulo: "Cancelar", valor: null }, { rotulo: "Baixar todos de novo", valor: "todos" },
       { rotulo: "Pular os repetidos", classe: "destaque", valor: "pular" }];
-  const escolha = await perguntar("Já baixado", texto, botoes);
-  if (escolha) baixar(escolha);
+  return perguntar("Já baixado", texto, botoes);
 }
 
 // ---------- fila (eventos vindos do Python) ----------
@@ -382,17 +402,32 @@ function itemDaFila(id) {
   return it;
 }
 
+/* Ação de um botão da fila: 1 clique, resposta na hora ("Pausando…") e todos os botões do item
+   ficam desativados até o Python confirmar a mudança de estado (aí os botões são refeitos). */
+function acao(it, texto, classe, rotuloEsperando, funcao) {
+  const b = botao(texto, classe, async () => {
+    it.acoes.querySelectorAll("button").forEach((x) => { x.disabled = true; });
+    b.textContent = rotuloEsperando;
+    const aceito = await funcao(it.id);
+    if (!aceito) {   // não deu (ex.: ainda encerrando o download anterior): volta os botões
+      botoesDoItem(it);
+      it.detalhe.textContent = "Aguarde um instante e tente de novo: ainda estou encerrando o download anterior.";
+    }
+  });
+  return b;
+}
+
 function botoesDoItem(it) {
   const ev = it.ultimo;
   const b = [];
   if (it.estado === "fila" || it.estado === "baixando") {
-    b.push(botao("⏸ Pausar", "cinza", () => api.pausar(it.id)));
-    b.push(botao("✖ Cancelar", "perigo", () => api.cancelar(it.id)));
+    b.push(acao(it, "⏸ Pausar", "cinza", "Pausando…", api.pausar));
+    b.push(acao(it, "✖ Cancelar", "perigo", "Cancelando…", api.cancelar));
   } else if (it.estado === "pausado") {
-    b.push(botao("▶ Retomar", "destaque", () => api.retomar(it.id)));
-    b.push(botao("✖ Cancelar", "perigo", () => api.cancelar(it.id)));
+    b.push(acao(it, "▶ Retomar", "destaque", "Retomando…", api.retomar));
+    b.push(acao(it, "✖ Cancelar", "perigo", "Cancelando…", api.cancelar));
   } else if (it.estado === "erro" || it.estado === "cancelado") {
-    b.push(botao("↻ Tentar de novo", "cinza", () => api.retomar(it.id)));
+    b.push(acao(it, "↻ Tentar de novo", "cinza", "Colocando na fila…", api.retomar));
   } else if (it.estado === "ok") {
     if (ev.pasta) b.push(botao("📂 Abrir pasta", "cinza", () => api.abrir_pasta(ev.pasta)));
     if (ev.arquivos && ev.arquivos.length) b.push(botao("🔎 Mostrar no Explorer", "cinza", () => api.mostrar_arquivo(ev.arquivos[0])));
@@ -424,7 +459,8 @@ window.estudio = {
       if (ev.status) it.status.textContent = ev.status;
       if (ev.pct != null) it.barra.style.width = `${Math.max(0, Math.min(100, ev.pct))}%`;
       if (ev.vel) it.detalhe.textContent = `${ev.vel} • falta ${ev.eta || "?"}`;
-      if (ev.estado && ev.estado !== it.estado) {
+      Object.assign(it.ultimo, ev);
+      if (ev.estado && ev.estado !== it.estado || !it.acoes.childElementCount) {
         it.estado = ev.estado;
         it.li.className = `item ${ev.estado}`;
         if (ev.estado === "fila") it.detalhe.textContent = "";
@@ -440,9 +476,8 @@ window.estudio = {
           avisar("Erro ao baixar", `${it.titulo.textContent}\n\n${ev.erro}`);
         }
         if (ev.fim) terminou = true;
+        botoesDoItem(it);          // só refaz os botões quando o estado muda (senão o clique se perde)
       }
-      Object.assign(it.ultimo, ev);
-      botoesDoItem(it);
     }
     atualizarResumo();
     if (terminou && !$("#painel-historico").classList.contains("escondido")) {

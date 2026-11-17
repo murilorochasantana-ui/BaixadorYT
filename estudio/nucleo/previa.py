@@ -5,7 +5,7 @@ import yt_dlp
 
 from .ffmpeg import pasta_ffmpeg
 from .plataformas import plataforma
-from .qualidades import BYTES_POR_SEG_CONVERTIDO, ORDEM, QUALIDADES, codec_convertido
+from .qualidades import BYTES_POR_SEG_CONVERTIDO, ORDEM, ORDEM_FORMATOS, QUALIDADES, codec_convertido
 
 GB = 1024 ** 3
 
@@ -94,7 +94,8 @@ def tabela_formatos(info):
 def ler_previa(url, login_opts=None, aviso_gb=3):
     """Lê as informações do vídeo sem baixar. Pode demorar alguns segundos (roda fora da janela)."""
     opcoes = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True,
-              "playlist_items": "1-20", "noprogress": True}
+              "playlist_items": "1-20", "noprogress": True,
+              "format_sort": list(ORDEM_FORMATOS)}   # mesma escolha do download: a estimativa bate
     if pasta_ffmpeg():
         opcoes["ffmpeg_location"] = pasta_ffmpeg()
     opcoes.update(login_opts or {})

@@ -37,6 +37,7 @@ def test_ler_tempo_invalido(texto):
     ("https://www.youtube.com/watch?v=abcdefghijk&start=90", 90),
     ("https://www.twitch.tv/videos/123?t=1h2m3s", 3723),
     ("https://www.youtube.com/watch?v=abcdefghijk#t=1:30", 90),
+    ("https://www.youtube.com/live/abcdefghijk?si=x&t=16466s", 16466),     # 4:34:26 (caso real)
     ("https://www.youtube.com/watch?v=abcdefghijk", None),
     ("https://youtu.be/abcdefghijk?t=0", None),
 ])
@@ -101,28 +102,29 @@ def test_cortar_segmentos_recomeça_do_zero():
 
 
 # ---------- opções do yt-dlp ----------
-def test_opcoes_com_trecho_e_miniatura():
+def test_opcoes_com_trecho_nao_usam_o_download_ranges_lento():
     p = Pedido(url="https://youtu.be/x", pasta=r"D:\VCD", qualidade="🎵 Só áudio (MP3 320k)",
                inicio=1064, fim=1200, miniatura=True)
     o = montar_opcoes(p, lambda d: None)
-    assert o["force_keyframes_at_cuts"] is True
-    faixas = list(o["download_ranges"]({"id": "x", "duration": 5000}, None))
-    assert faixas == [{"start_time": 1064, "end_time": 1200}]
+    # o download_ranges do yt-dlp recodificava o trecho inteiro (lento) e não deixava cancelar
+    assert "download_ranges" not in o and "force_keyframes_at_cuts" not in o
     assert o["outtmpl"].endswith("[%(id)s] (trecho 17m44s-20m00s).%(ext)s")
-    chaves = [pp["key"] for pp in o["postprocessors"]]
-    assert chaves == ["FFmpegExtractAudio", "FFmpegThumbnailsConvertor"]   # áudio não some
+    assert [pp["key"] for pp in o["postprocessors"]] == ["FFmpegExtractAudio"]   # capa do trecho é à parte
+
+
+def test_miniatura_sem_trecho_soma_aos_pos_processadores():
+    p = Pedido(url="https://youtu.be/x", pasta="p", qualidade="🎵 Só áudio (MP3 320k)", miniatura=True)
+    o = montar_opcoes(p, lambda d: None)
+    assert [pp["key"] for pp in o["postprocessors"]] == ["FFmpegExtractAudio", "FFmpegThumbnailsConvertor"]
     assert o["writethumbnail"] is True
 
 
-def test_trecho_sem_fim_vai_ate_o_final():
-    p = Pedido(url="https://youtu.be/x", pasta="p", qualidade="📱 720p", inicio=60)
-    faixas = list(montar_opcoes(p, lambda d: None)["download_ranges"]({"id": "x"}, None))
-    assert faixas[0]["start_time"] == 60 and math.isinf(faixas[0]["end_time"])
-
-
-def test_sem_trecho_nem_miniatura_nao_mexe():
+def test_prefere_mp4_h264_sem_perder_resolucao():
     o = montar_opcoes(Pedido(url="https://youtu.be/x", pasta="p", qualidade="📱 720p"), lambda d: None)
-    assert "download_ranges" not in o and "writethumbnail" not in o and "postprocessors" not in o
+    assert o["format_sort"][:2] == ["res", "fps"]               # qualidade primeiro
+    assert "vcodec:h264" in o["format_sort"] and "acodec:aac" in o["format_sort"]
+    assert o["merge_output_format"] == "mp4/mkv"
+    assert "writethumbnail" not in o
 
 
 def test_config_paralelos_limitado():

@@ -40,3 +40,63 @@ def ffmpeg_disponivel():
 
 def rodar(cmd):
     return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **SEM_JANELA)
+
+
+def exe_ffprobe():
+    ffmpeg = exe_ffmpeg()
+    vizinho = os.path.join(os.path.dirname(ffmpeg), "ffprobe.exe" if os.name == "nt" else "ffprobe")
+    return vizinho if os.path.isfile(vizinho) else (shutil.which("ffprobe") or "ffprobe")
+
+
+def matar_arvore(proc):
+    """Encerra o processo E os filhos (no Windows, o ffmpeg pode ter abertos outros processos)."""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **SEM_JANELA)
+    else:
+        proc.kill()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def rodar_cancelavel(cmd, checar=lambda: None, ao_ler_linha=None):
+    """Roda um comando checando a cada 0,25 s se o usuário pausou/cancelou.
+    `checar` lança exceção para parar: o processo (e os filhos) é encerrado na hora.
+    `ao_ler_linha` recebe cada linha da saída (usado com `ffmpeg -progress pipe:1`).
+    Retorna o CompletedProcess (stderr em bytes)."""
+    import queue
+    import threading
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE if ao_ler_linha else subprocess.DEVNULL,
+                            stderr=subprocess.PIPE, **SEM_JANELA)
+    erros, linhas = [], queue.Queue()
+    leitores = [threading.Thread(target=lambda: erros.append(proc.stderr.read()), daemon=True)]
+    if ao_ler_linha:
+        leitores.append(threading.Thread(
+            target=lambda: [linhas.put(l.decode(errors="ignore").strip()) for l in iter(proc.stdout.readline, b"")],
+            daemon=True))
+    for t in leitores:
+        t.start()
+    try:
+        while True:
+            checar()
+            while not linhas.empty():
+                ao_ler_linha(linhas.get_nowait())
+            if proc.poll() is not None:
+                break
+            try:
+                proc.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                pass
+    except BaseException:
+        matar_arvore(proc)
+        raise
+    for t in leitores:
+        t.join(timeout=5)
+    while ao_ler_linha and not linhas.empty():
+        ao_ler_linha(linhas.get_nowait())
+    return subprocess.CompletedProcess(cmd, proc.returncode, None, b"".join(e for e in erros if e))

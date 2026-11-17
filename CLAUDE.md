@@ -242,8 +242,26 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
   - **Repetido** = mesmo `chave` + mesmo trecho com status `ok`. A interface pergunta: Baixar de novo / Pular os repetidos / Cancelar (`forcar` = `todos` | `pular`).
 - **Miniatura:** `writethumbnail` + `FFmpegThumbnailsConvertor` (jpg, `before_dl`), somado aos pós-processadores de áudio sem sobrescrever.
 - **Notificação** (`nucleo/notificacao.py`): toast pelo PowerShell (`-EncodedCommand`, sem instalar nada), com o AppID do PowerShell, então aparece como "Windows PowerShell". Na Fase 7, com o instalador, ganha nome próprio. Avisa em ok e erro; pausar e cancelar não avisam.
-- **Ainda não testado:** pausar no meio de um **trecho**. O trecho é baixado pelo ffmpeg, e o yt-dlp pode não chamar o gancho de progresso; nesse caso a pausa só vale quando o trecho termina.
 - O YouTube deu 403 no formato só-áudio 140 do vídeo de teste "Me at the zoo" (coisa do YouTube, não do Estúdio).
+
+### Correções depois do teste da 1B (feitas)
+- **Trecho rápido (`nucleo/trecho.py`):** NÃO usar o `download_ranges` do yt-dlp. Com `force_keyframes_at_cuts` ele **recodifica o trecho inteiro** (external.py: sem `-c copy`), fica preso em `proc.wait()` sem progresso nem cancelamento, e o ffmpeg lendo o YouTube direto leva 403. São três caminhos:
+  - **`indice`** (MP4/M4A por https com tamanho, ou seja, o YouTube): lê o começo do arquivo (`moov` + `sidx`), escolhe os segmentos do trecho e baixa só esses bytes em blocos de 4 MB, 6 ao mesmo tempo, pelo `ydl.urlopen` (mesma conexão e cabeçalhos do yt-dlp). Os blocos ficam em `<nome>.trecho-tmp/` com um `plano.json`: pausar e retomar reaproveita os blocos.
+  - **`hls`** (Twitch): o ffmpeg lê só os segmentos (`-ss`/`-t` antes do `-i`, `-c copy`) em processo próprio, com `-progress pipe:1`.
+  - **`inteiro`** (TikTok etc., sem tamanho conhecido): baixa inteiro pelo yt-dlp numa pasta temporária e corta.
+- **Corte local:** sempre `-c copy`, começando no **quadro-chave antes do início** (`quadro_chave_antes` via ffprobe `-read_intervals`). O trecho pode começar alguns segundos antes (2–5 s); o início real vai para a transcrição (`"trecho"` no `.json`).
+- **YouTube `available_at`:** os formatos só são liberados ~3–4 s depois de lidos. Antes disso, qualquer pedido leva **403**. `esperar_liberacao` mostra "Preparando o trecho... (N s)".
+- **Medido no PC do usuário:** 1 h de live em 720p = 360 MB em 17 s (antes ~40 min); 2 min de VOD da Twitch em 5 s; cancelar em 0,2–0,8 s sem sobrar ffmpeg nem arquivo.
+- **Processos:** `ffmpeg.rodar_cancelavel` (checa a cada 0,25 s e encerra o processo com `taskkill /T`) é usado no trecho, no corte e na divisão do Modo Claude. Cancelar apaga a pasta `.trecho-tmp`, os `.part`, os `.fNNN.` e os `.temp.` da junção.
+- **Sem entrada duplicada:** `Gerenciador.ja_na_fila` (mesmo vídeo + trecho em fila/baixando/pausado) faz a ponte recusar. O conjunto `rodando` impede retomar enquanto a thread ainda encerra. Na interface, o BAIXAR fica travado enquanto envia.
+- **Botões com 1 clique:** a causa era o `botoesDoItem` recriar os botões a cada evento de progresso, e o clique caía num elemento removido. Agora os botões só são refeitos quando o estado muda, e o botão clicado mostra "Pausando…"/"Cancelando…" desativado.
+- **MP4 por padrão:** `qualidades.ORDEM_FORMATOS = ("res", "fps", "vcodec:h264", "acodec:aac", "ext:mp4:m4a")` como `format_sort`, tanto no download quanto na prévia, para a estimativa bater. Preferir só "mp4" escolhia AV1, que o CapCut abre mal.
+- **Aviso do `?t=`:** só é preenchido quando o link muda, e editar o Início tira o aviso.
+
+## Modelo do Claude por fase (regra do usuário)
+**No fim de cada fase, lembrar em destaque qual modelo usar na próxima:**
+- **Sonnet 5.5:** fases 2 (explorador), 5 (métricas) e 7 (acabamento).
+- **Opus 5.5:** fases 6 (cronograma), 3 (editor) e 4 (chat com o Claude).
 
 ### Problemas descobertos na 1A (corrigidos no Estúdio e no `app/` antigo)
 - **faster-whisper 1.2.1 + PyAV 19 são incompatíveis** (`av.open(... metadata_errors=...)` dá TypeError). Nenhum dos dois apps usa mais o PyAV: `carregar_audio` lê o áudio com o ffmpeg (mono, 16 kHz, s16le → numpy) e entrega o array ao Whisper.
@@ -252,7 +270,7 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - `Start-Process -WindowStyle Hidden` esconde a janela do pywebview; para testar, abra com `pythonw.exe` normalmente.
 
 ### Testes
-- `cd estudio` e depois `py -3.12 -m pytest testes -q`. São 90 testes. A 1B testa a fila com um `YoutubeDL` falso (`test_fase1b.py`, classe `YDLFalso`), que segura o download até o teste liberar. A 1A tem 48 testes: plataformas, erros, config, qualidades, opções do yt-dlp, leitores de legenda, palavras, `.md`/`.json`, divisão com ffmpeg real, leitura de áudio, queda para CPU e estimativa de tamanho com o seletor real do yt-dlp).
+- `cd estudio` e depois `py -3.12 -m pytest testes -q`. São 107 testes (inclui `test_trecho.py`: vídeos DASH gerados no PC + yt-dlp falso que responde a `Range`). A 1B testa a fila com um `YoutubeDL` falso (`test_fase1b.py`, classe `YDLFalso`), que segura o download até o teste liberar. A 1A tem 48 testes: plataformas, erros, config, qualidades, opções do yt-dlp, leitores de legenda, palavras, `.md`/`.json`, divisão com ffmpeg real, leitura de áudio, queda para CPU e estimativa de tamanho com o seletor real do yt-dlp).
 - Interface sem o Python: `.claude/launch.json` → "interface-estudio" (servidor estático) e um `window.pywebview.api` falso no console.
 - Testado de verdade na 1A: prévia + download do YouTube (720p, estimativa de 476 KB contra 475 KB reais), `.md`/`.json` pela legenda, Whisper `tiny` com tempo de cada palavra (caindo para a CPU), Modo Claude dividindo em 2 partes e a janela abrindo com o config antigo importado.
 

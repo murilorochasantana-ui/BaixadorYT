@@ -36,6 +36,10 @@ ORDEM = [
     "🎵 Só áudio (WAV)", "🎞️ Só vídeo (sem áudio)", AVANCADO,
 ]
 
+# Ordem de preferência entre formatos da MESMA qualidade (yt-dlp "format_sort"): resolução e fps
+# primeiro (nunca troca qualidade por compatibilidade), depois H.264 + AAC em MP4.
+ORDEM_FORMATOS = ("res", "fps", "vcodec:h264", "acodec:aac", "ext:mp4:m4a")
+
 # bitrate de saída quando o áudio é convertido (para estimar o tamanho), em bytes por segundo
 BYTES_POR_SEG_CONVERTIDO = {"mp3": 320_000 / 8, "wav": 44_100 * 2 * 2}
 
