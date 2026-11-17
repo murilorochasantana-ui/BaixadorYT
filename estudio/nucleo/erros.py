@@ -32,7 +32,10 @@ def explicar_erro(msg, login):
     if any(x in m for x in ("unexpected response from webpage request", "unable to extract challenge data",
                             "no impersonate target is available", "unable to solve js challenge")):
         return MSG_TIKTOK_BLOQUEOU
-    if "is_live" in m or "live event" in m or "está ao vivo" in m or "live acontecendo" in m:
+    if "not currently live" in m:
+        return ("Esse canal não está ao vivo agora.\n\n"
+                "Para baixar uma live que já terminou, use o link do VOD (na Twitch: aba Vídeos do canal).")
+    if any(x in m for x in ("is_live", "live event", "está ao vivo", "live acontecendo", "live está acontecendo")):
         return msg
     if any(x in m for x in ("login required", "requested content is not available",
                             "rate-limit", "rate limit", "empty media response", "only available for registered",

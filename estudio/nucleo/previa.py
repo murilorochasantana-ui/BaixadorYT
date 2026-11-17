@@ -4,6 +4,7 @@ import re
 import yt_dlp
 
 from .ffmpeg import pasta_ffmpeg
+from .gravacao import tipo_live
 from .plataformas import plataforma
 from .qualidades import BYTES_POR_SEG_CONVERTIDO, ORDEM, ORDEM_FORMATOS, QUALIDADES, codec_convertido
 
@@ -95,7 +96,10 @@ def ler_previa(url, login_opts=None, aviso_gb=3):
     """Lê as informações do vídeo sem baixar. Pode demorar alguns segundos (roda fora da janela)."""
     opcoes = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True,
               "playlist_items": "1-20", "noprogress": True,
+              "socket_timeout": 15,                    # rede parada não segura a prévia para sempre
               "format_sort": list(ORDEM_FORMATOS)}   # mesma escolha do download: a estimativa bate
+    if plataforma(url) == "Twitch":
+        opcoes["live_from_start"] = True   # live: o yt-dlp acha o VOD que está sendo gerado (Fase 1C)
     if pasta_ffmpeg():
         opcoes["ffmpeg_location"] = pasta_ffmpeg()
     opcoes.update(login_opts or {})
@@ -109,6 +113,7 @@ def ler_previa(url, login_opts=None, aviso_gb=3):
                 tamanhos[nome] = estimar_tamanho(ydl, principal, QUALIDADES[nome])
     titulo = re.sub(r"\s+", " ", principal.get("title") or info.get("title") or url).strip()
     maior = max([t for t in tamanhos.values() if t] or [0])
+    live = tipo_live(principal)
     return {
         "url": url,
         "plataforma": plataforma(url),
@@ -117,6 +122,8 @@ def ler_previa(url, login_opts=None, aviso_gb=3):
         "duracao": principal.get("duration"),
         "miniatura": principal.get("thumbnail"),
         "ao_vivo": bool(principal.get("is_live")),
+        "live_com_vod": live == "vod",      # Twitch: dá para baixar trecho do que já passou
+        "live_sem_vod": live == "gravar",   # Twitch: só gravando a partir de agora
         "itens": len(entradas) if entradas else 1,
         "tem_legenda": bool(principal.get("subtitles") or principal.get("automatic_captions")),
         "tamanhos": tamanhos,

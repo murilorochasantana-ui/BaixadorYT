@@ -179,7 +179,10 @@ async function pedirPrevia(url) {
   caixa.classList.remove("escondido");
   caixa.replaceChildren(el("div", { className: "carregando" }, el("div", { className: "girando" }),
     "Lendo informações do vídeo…"));
-  const r = await api.previa(url);
+  // o Python já desiste em 30 s; este limite extra só protege se a própria chamada não voltar
+  const r = await Promise.race([api.previa(url), new Promise((ok) => setTimeout(() => ok({ ok: false,
+    erro: "A prévia não respondeu. Feche e abra o Estúdio de novo. Se continuar, rode o atualizar.bat.\n\n" +
+      "Você pode clicar em BAIXAR mesmo sem a prévia." }), 40000))]);
   if (meu !== estado.pedidoPrevia) return; // o link mudou enquanto lia
   if (!r.ok) {
     estado.previa = null;
@@ -189,6 +192,13 @@ async function pedirPrevia(url) {
   }
   estado.previa = r.dados;
   estado.formato = null;
+  if (r.dados.live_com_vod) {   // live da Twitch com VOD: só dá para baixar trecho do que já passou
+    $("#trecho-ativo").checked = true;
+    estado.inicioAuto = true;   // ligado sozinho: desliga sozinho ao trocar de link ou baixar
+    atualizarTrecho();
+    $("#trecho-ajuda").textContent = `🔴 Ao vivo: já passaram ${duracao(r.dados.duracao)}. ` +
+      "Escolha Início e Fim dentro disso (ex.: 5:30:00 e 5:32:00).";
+  }
   mostrarPrevia();
   preencherFormatos();
 }
@@ -236,7 +246,16 @@ function mostrarPrevia() {
       textContent: `⚠ Isso vai baixar cerca de ${bytes(sel)}. Confira se tem espaço no disco, ` +
         `ou escolha 720p / "Para edição" (ou baixe só um trecho) para um arquivo menor.` }));
   }
-  if (p.ao_vivo) {
+  if (p.live_com_vod) {
+    partes.push(el("div", { className: "aviso-grande",
+      textContent: `🔴 Live acontecendo agora. O Estúdio achou o VOD que está sendo gerado: baixe um trecho ` +
+        `do que já passou (até ${duracao(p.duracao)}), sem esperar a live acabar.` }));
+  } else if (p.live_sem_vod) {
+    partes.push(el("div", { className: "aviso-grande" },
+      el("div", { textContent: "🔴 Live acontecendo agora, mas esse canal não guarda VOD (ou a Twitch ainda " +
+        "não liberou). Dá para gravar a partir de agora, até você clicar em Parar." }),
+      botao("🔴 Gravar a partir de agora", "destaque", (e) => { e.target.disabled = true; enviarDownload(undefined, true); })));
+  } else if (p.ao_vivo) {
     partes.push(el("div", { className: "aviso-grande",
       textContent: "Essa live está acontecendo agora. Espere ela terminar para baixar o VOD." }));
   }
@@ -335,7 +354,7 @@ async function baixar(forcar = null) {
   }
 }
 
-async function enviarDownload(forcar) {
+async function enviarDownload(forcar, gravar = false) {
   const qualidade = $("#qualidade").value;
   const f = estado.formato;
   const r = await api.baixar({
@@ -346,9 +365,10 @@ async function enviarDownload(forcar) {
     transcricao: $("#transcricao").checked,
     miniatura: $("#miniatura").checked,
     trecho: { ativo: $("#trecho-ativo").checked, inicio: $("#trecho-inicio").value, fim: $("#trecho-fim").value },
+    gravar,
   });
-  if (r.duplicados) { const escolha = await perguntarRepetidos(r); if (escolha) await enviarDownload(escolha); return; }
-  if (!r.ok) { avisar("Não deu para baixar", r.erro); return; }
+  if (r.duplicados) { const escolha = await perguntarRepetidos(r); if (escolha) await enviarDownload(escolha, gravar); return; }
+  if (!r.ok) { avisar("Não deu para baixar", r.erro); mostrarPrevia(); return; }
 
   $("#link").value = "";
   ajustarAltura();
@@ -421,7 +441,10 @@ function acao(it, texto, classe, rotuloEsperando, funcao) {
 function botoesDoItem(it) {
   const ev = it.ultimo;
   const b = [];
-  if (it.estado === "fila" || it.estado === "baixando") {
+  if (ev.gravacao && it.estado === "baixando") {   // gravação de live: não pausa, para e salva
+    b.push(acao(it, "⏹ Parar e salvar", "destaque", "Parando…", api.parar));
+    b.push(acao(it, "✖ Cancelar", "perigo", "Cancelando…", api.cancelar));
+  } else if (it.estado === "fila" || it.estado === "baixando") {
     b.push(acao(it, "⏸ Pausar", "cinza", "Pausando…", api.pausar));
     b.push(acao(it, "✖ Cancelar", "perigo", "Cancelando…", api.cancelar));
   } else if (it.estado === "pausado") {

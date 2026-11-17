@@ -148,7 +148,7 @@ function selecionar(no) {
   ex.sel = no;
   no.linha.classList.add("sel");
   no.linha.scrollIntoView({ block: "nearest" });
-  mostrarPrevia(no.item.caminho);
+  mostrarPreviaArquivo(no.item.caminho);
 }
 
 $("#arvore").addEventListener("keydown", (e) => {
@@ -218,7 +218,7 @@ function montarAcoes(d) {
   return a;
 }
 
-async function mostrarPrevia(caminho) {
+async function mostrarPreviaArquivo(caminho) {
   const meu = ++ex.tokenPrevia;
   $("#previa-arq").replaceChildren(el("div", { className: "carregando" }, el("div", { className: "girando" }), "Lendo o arquivo…"));
   const r = await api.info_arquivo(caminho);
@@ -317,7 +317,7 @@ window.explorador = {
     if (ev.estado === "gerando") {
       const g = document.querySelector("#prev-gerar .prev-gerando");
       if (g) g.lastChild.textContent = `Gerando a prévia… ${Math.round(ev.pct || 0)}%`;
-    } else if (ev.estado === "pronta") mostrarPrevia(ex.sel.item.caminho);
+    } else if (ev.estado === "pronta") mostrarPreviaArquivo(ex.sel.item.caminho);
     else if (ev.estado === "erro") { const a = $("#prev-gerar"); if (a) a.textContent = ev.erro; }
   },
 };

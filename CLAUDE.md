@@ -209,7 +209,7 @@ Converte os erros do yt-dlp em mensagens em português com a solução: restriç
 ## 10. Estúdio ViceCityDay (Baixador YT 2.0, pasta `estudio/`)
 
 Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-downloads-prompt-claude-c-dynamic-crab.md`.
-**Ordem das fases:** 1A → 1B → 2 (explorador) → 6 (cronograma) → 3 (editor) → 4 (chat Claude) → 5 (métricas) → 7 (acabamento). Uma fase por vez, commit no fim de cada uma.
+**Ordem das fases:** 1A → 1B → 2 (explorador) → 1C (Twitch ao vivo) → 6 (cronograma) → 3 (editor) → 4 (chat Claude) → 5 (métricas) → 7 (acabamento). Uma fase por vez, commit no fim de cada uma.
 
 ### Arquitetura
 - **Python + interface web numa janela** (`pywebview` 6.x + WebView2). Sem Node, sem build: HTML/CSS/JS puros em `estudio/interface/` (bibliotecas JS futuras ficam salvas em `interface/vendor/`, sem CDN).
@@ -275,10 +275,25 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - Testes: `testes/test_explorador.py` (41: classificação, caminhos, listagem, Lixeira, vigia real, servidor com Range/senha/host, prévia, ponte). Total: 154.
 - **Ainda não feito:** abrir sozinha só `VideosLives` (as outras pastas começam fechadas); pasta do canal diferente do padrão só pelo botão da tela (a tela de Configurações é da Fase 7); a lista da Lixeira não é mostrada no app.
 
+### Bug da prévia depois da Fase 2 (corrigido)
+- A prévia ficava presa em "Lendo informações do vídeo…". O Python respondia em ~3 s; o problema estava no JS: o `explorador.js` declarava **outra função global `mostrarPrevia`**, que substituía a da aba Baixar (os dois scripts dividem o mesmo escopo global). A do explorador virou `mostrarPreviaArquivo`. **Regra:** antes de criar uma função global no JS, procure se o nome já existe nos outros `.js`.
+- Limite de tempo: `Ponte.previa` roda o yt-dlp numa thread e desiste depois de `LIMITE_PREVIA` (30 s), com `MSG_PREVIA_DEMOROU` (conferir a internet, rodar o `atualizar.bat`, BAIXAR funciona sem prévia). A prévia também usa `socket_timeout: 15`, e o JS tem uma segunda trava de 40 s.
+
+### Fase 1C (feita): lives da Twitch em andamento (`nucleo/gravacao.py`)
+- **Live com VOD:** para links da Twitch, a prévia e o download usam `live_from_start: True`. Com isso, o yt-dlp troca `twitch.tv/<canal>` pelo VOD que está sendo gerado (`twitch:vod`, `is_live` = True). Esse VOD é uma playlist HLS do tipo **EVENT** que vai crescendo, e o caminho `hls` do `trecho.py` (ffmpeg `-ss`/`-t`) funciona sem mudança. `tipo_live(info)` → `None` | `"vod"` | `"gravar"` | `"outra"`. A prévia manda `live_com_vod`/`live_sem_vod`. Com VOD, a interface liga o trecho sozinha e mostra quanto da live já passou. Sem trecho, o download recusa com `MSG_LIVE_TRECHO`.
+- **Live sem VOD:** a prévia mostra o botão "🔴 Gravar a partir de agora" (`Pedido.gravar`, sem `live_from_start`). Na fila aparecem "⏹ Parar e salvar" (`Gerenciador.parar` → `pedir = "parar"`, que o `_checar` **não** trata como interrupção; Pausar numa gravação vira Parar) e Cancelar (apaga tudo).
+- **Gravação sem o ffmpeg lendo a live:** a Twitch encaixa **~30 s de anúncio no começo** para quem não é inscrito ou Turbo. Com o ffmpeg lendo direto, a primeira gravação de teste foi **só anúncio**. Agora `gravar_live` lê a playlist a cada 2 s e baixa os segmentos novos pelo `ydl.urlopen`. Ele **pula os de anúncio** (título do `#EXTINF` diferente de `live`, por exemplo `Amazon|…`) e grava em `.ts` com flush (se o PC desligar, o arquivo continua abrindo). No fim, passa para `.mp4` com `-c copy`; se a passagem falhar, entrega o `.ts`. Durante o anúncio, aparece "📺 Esperando o anúncio da Twitch acabar…". Nome: `<título> [id] (gravado dd-mm HHhMM).mp4`.
+- Gravações não passam pelo aviso de repetido. Canal fora do ar → "Esse canal não está ao vivo agora…" (`explicar_erro`).
+- **Testado de verdade (17/11, live do Gaules no ar havia ~46 h, em `_testes`, tudo apagado depois):** prévia em 2,7 s com `live_com_vod`; trecho de 2 min na hora 10 do VOD em andamento, em 720p, em 12,5 s; gravação de 60 s → pulou 30 s de anúncio, salvou 30 s de live em 720p (quadro conferido) 0,3 s depois do Parar; `xqc` fora do ar → mensagem em português.
+- Testes: `testes/test_fase1c.py` (12). Inclui uma "live" HLS local (sem `ENDLIST`, com segmentos `Amazon|…`) lida por `file://`, além do limite da prévia. Total: 166.
+- **Fica para depois:** YouTube ao vivo; mid-roll da Twitch no meio da gravação (os segmentos são pulados, então fica um corte de tempo no `.mp4`); a playlist de uma gravação muito longa pode expirar (o token da Twitch), e aí a gravação para sozinha e salva o que já tem depois de 10 falhas seguidas.
+
 ## Modelo do Claude por fase (regra do usuário)
-**No fim de cada fase, lembrar em destaque qual modelo usar na próxima:**
-- **Sonnet 5.5:** fases 2 (explorador), 5 (métricas) e 7 (acabamento).
-- **Opus 5.5:** fases 6 (cronograma), 3 (editor) e 4 (chat com o Claude).
+**Cada fase começa numa sessão NOVA do Claude Code, já aberta com o modelo certo** (não continuar uma fase na sessão da anterior). No fim de cada fase, lembrar em destaque qual modelo usar na próxima.
+**Próximas fases, nesta ordem:** 6 (cronograma) → 3 (editor) → 4 (chat com o Claude) → 5 (métricas) → 7 (acabamento).
+- **Opus 5.5:** fases 6, 3 e 4.
+- **Sonnet 5.5:** fases 5 e 7.
+- YouTube ao vivo fica para depois (não tem fase marcada).
 
 ### Problemas descobertos na 1A (corrigidos no Estúdio e no `app/` antigo)
 - **faster-whisper 1.2.1 + PyAV 19 são incompatíveis** (`av.open(... metadata_errors=...)` dá TypeError). Nenhum dos dois apps usa mais o PyAV: `carregar_audio` lê o áudio com o ffmpeg (mono, 16 kHz, s16le → numpy) e entrega o array ao Whisper.
@@ -287,7 +302,7 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - `Start-Process -WindowStyle Hidden` esconde a janela do pywebview; para testar, abra com `pythonw.exe` normalmente.
 
 ### Testes
-- `cd estudio` e depois `py -3.12 -m pytest testes -q`. São 154 testes (a Fase 2 trouxe `test_explorador.py`; o plano B do trecho entrou em `test_trecho.py`; ao todo inclui `test_trecho.py`: vídeos DASH gerados no PC + yt-dlp falso que responde a `Range`). A 1B testa a fila com um `YoutubeDL` falso (`test_fase1b.py`, classe `YDLFalso`), que segura o download até o teste liberar. A 1A tem 48 testes: plataformas, erros, config, qualidades, opções do yt-dlp, leitores de legenda, palavras, `.md`/`.json`, divisão com ffmpeg real, leitura de áudio, queda para CPU e estimativa de tamanho com o seletor real do yt-dlp).
+- `cd estudio` e depois `py -3.12 -m pytest testes -q`. São 166 testes (a 1C trouxe `test_fase1c.py`; a Fase 2 trouxe `test_explorador.py`; o plano B do trecho entrou em `test_trecho.py`; ao todo inclui `test_trecho.py`: vídeos DASH gerados no PC + yt-dlp falso que responde a `Range`). A 1B testa a fila com um `YoutubeDL` falso (`test_fase1b.py`, classe `YDLFalso`), que segura o download até o teste liberar. A 1A tem 48 testes: plataformas, erros, config, qualidades, opções do yt-dlp, leitores de legenda, palavras, `.md`/`.json`, divisão com ffmpeg real, leitura de áudio, queda para CPU e estimativa de tamanho com o seletor real do yt-dlp).
 - Interface sem o Python: `.claude/launch.json` → "interface-estudio" (servidor estático) e um `window.pywebview.api` falso no console.
 - Testado de verdade na 1A: prévia + download do YouTube (720p, estimativa de 476 KB contra 475 KB reais), `.md`/`.json` pela legenda, Whisper `tiny` com tempo de cada palavra (caindo para a CPU), Modo Claude dividindo em 2 partes e a janela abrindo com o config antigo importado.
 

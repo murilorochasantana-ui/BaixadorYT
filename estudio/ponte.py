@@ -31,6 +31,13 @@ from nucleo.tempos import formatar_tempo, tempo_do_link, validar_trecho
 from nucleo.transcricao import whisper_disponivel
 from servidor_midia import ServidorMidia
 
+LIMITE_PREVIA = 30   # segundos: depois disso a prévia desiste e explica o que fazer
+MSG_PREVIA_DEMOROU = ("A prévia demorou mais de {s} segundos e foi interrompida.\n\n"
+                      "O que fazer:\n"
+                      "• Confira a internet e cole o link de novo.\n"
+                      "• Se continuar, feche o Estúdio e rode o atualizar.bat (os sites mudam e o yt-dlp "
+                      "precisa estar atualizado).\n"
+                      "• Você pode clicar em BAIXAR mesmo sem a prévia.")
 AVISO_LINK = "Cole um link do YouTube, TikTok, Instagram, Twitch, Pinterest ou Facebook."
 
 
@@ -153,11 +160,23 @@ class Ponte:
         url = (url or "").strip()
         if not link_valido(url):
             return {"ok": False, "erro": AVISO_LINK}
-        try:
-            dados = ler_previa(url, opcoes_login(self._cfg), self._cfg.get("aviso_gb", 3))
-            return {"ok": True, "dados": dados}
-        except Exception as e:
-            return {"ok": False, "erro": explicar_erro(limpar_mensagem(e), self._cfg.get("login", "Nenhum"))}
+        resultado = {}
+
+        def ler():
+            try:
+                resultado["dados"] = ler_previa(url, opcoes_login(self._cfg), self._cfg.get("aviso_gb", 3))
+            except Exception as e:
+                resultado["erro"] = e
+        # roda numa thread à parte para ter limite de tempo: se o yt-dlp travar, ela fica para trás sozinha
+        fio = threading.Thread(target=ler, daemon=True, name="previa-link")
+        fio.start()
+        fio.join(LIMITE_PREVIA)
+        if fio.is_alive():
+            return {"ok": False, "erro": MSG_PREVIA_DEMOROU.format(s=LIMITE_PREVIA)}
+        if "erro" in resultado:
+            return {"ok": False, "erro": explicar_erro(limpar_mensagem(resultado["erro"]),
+                                                       self._cfg.get("login", "Nenhum"))}
+        return {"ok": True, "dados": resultado["dados"]}
 
     def baixar(self, dados):
         """Põe na fila um ou vários links.
@@ -177,7 +196,10 @@ class Ponte:
             if not (formato and formato.get("id")):
                 return {"ok": False, "erro": "No modo Avançado, escolha um formato na tabela da prévia antes de baixar."}
         inicio = fim = None
-        trecho = dados.get("trecho") or {}
+        gravar = bool(dados.get("gravar"))
+        if gravar and len(links) > 1:
+            return {"ok": False, "erro": "Para gravar uma live, cole um link por vez."}
+        trecho = {} if gravar else (dados.get("trecho") or {})
         if trecho.get("ativo"):
             if len(links) > 1:
                 return {"ok": False, "erro": "Para baixar só um trecho, cole um link por vez."}
@@ -200,7 +222,7 @@ class Ponte:
 
         # já baixou antes?
         pulados = len(na_fila)
-        if self._historico and dados.get("forcar") != "todos":
+        if self._historico and dados.get("forcar") != "todos" and not gravar:   # cada gravação é nova
             repetidos = []
             for link in links:
                 anterior = self._historico.procurar_duplicado(link, inicio, fim)
@@ -229,7 +251,7 @@ class Ponte:
                 limite_mb=limite if dados.get("modo_claude") else None,
                 login_opts=opcoes_login(self._cfg), login=self._cfg.get("login", "Nenhum"),
                 modelo_whisper=self._cfg.get("modelo_whisper", "small") if dados.get("transcricao") else None,
-                inicio=inicio, fim=fim, miniatura=bool(dados.get("miniatura")),
+                inicio=inicio, fim=fim, miniatura=bool(dados.get("miniatura")), gravar=gravar,
             )
             ids.append(self._downloads.adicionar(pedido))
         return {"ok": True, "ids": ids, "invalidos": invalidos, "pulados": pulados}
@@ -240,6 +262,10 @@ class Ponte:
 
     def retomar(self, id_):
         return self._downloads.retomar(id_)
+
+    def parar(self, id_):
+        """Gravação de live: para e salva."""
+        return self._downloads.parar(id_)
 
     def cancelar(self, id_):
         return self._downloads.cancelar(id_)

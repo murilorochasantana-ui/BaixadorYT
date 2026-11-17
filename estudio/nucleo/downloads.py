@@ -14,6 +14,7 @@ import os
 import queue
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 
 import yt_dlp
@@ -22,6 +23,8 @@ from .controle import Interrompido  # noqa: F401  (reexportado: os testes import
 from .divisao import dividir
 from .erros import explicar_erro, limpar_mensagem
 from .ffmpeg import pasta_ffmpeg
+from .gravacao import (MSG_LIVE_OUTRA, MSG_LIVE_SEM_VOD, MSG_LIVE_TRECHO, MSG_NAO_AO_VIVO,
+                       gravar_live, tipo_live)
 from .plataformas import plataforma
 from .qualidades import ORDEM_FORMATOS, codec_convertido, opcoes_qualidade
 from .plataformas import chave_do_link
@@ -47,6 +50,7 @@ class Pedido:
     inicio: float | None = None           # trecho (segundos); None = desde o começo
     fim: float | None = None              # None = até o final
     miniatura: bool = False
+    gravar: bool = False                  # live da Twitch sem VOD: grava a partir de agora até Parar
     id: str = field(default_factory=lambda: f"d{next(_contador)}")
     registro: int | None = None           # linha no histórico
 
@@ -99,6 +103,10 @@ def montar_opcoes(pedido, gancho, gancho_pp=None):
         pos.append({"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"})
     if pos:
         opcoes["postprocessors"] = pos
+    # Twitch ao vivo: o yt-dlp troca o link do canal pelo VOD que está sendo gerado (dá para baixar trecho).
+    # Na gravação, não: aí queremos o sinal da live em si.
+    if plataforma(pedido.url) == "Twitch" and not pedido.gravar:
+        opcoes["live_from_start"] = True
     opcoes.update(pedido.login_opts or {})
     return opcoes
 
@@ -140,11 +148,23 @@ class Gerenciador:
         if self.historico and pedido.registro is None:
             pedido.registro = self.historico.registrar(pedido.para_dict())
         self.fila.put(pedido)
-        self._evento(pedido, estado="fila", status="Na fila", pct=0,
+        self._evento(pedido, estado="fila", status="Na fila", pct=0, gravacao=pedido.gravar or None,
                      titulo=f"[{plataforma(pedido.url)}] {pedido.url}")
         return pedido.id
 
+    def parar(self, id_):
+        """Gravação de live: para de gravar e salva o que já foi gravado."""
+        with self.trava:
+            p = self.pedidos.get(id_)
+            if not p or not p.gravar or self.estados.get(id_) != "baixando":
+                return False
+            self.pedir[id_] = "parar"
+        return True
+
     def pausar(self, id_):
+        p = self.pedidos.get(id_)
+        if p and p.gravar and self.estados.get(id_) == "baixando":
+            return self.parar(id_)          # live não dá para pausar: Pausar vira Parar e salvar
         with self.trava:
             est = self.estados.get(id_)
             if est == "fila":
@@ -225,7 +245,7 @@ class Gerenciador:
 
     def _checar(self, pedido):
         motivo = self.pedir.get(pedido.id)
-        if motivo:
+        if motivo and motivo != "parar":    # "parar" (gravação) não interrompe: só encerra a gravação
             raise Interrompido(motivo)
 
     def _trabalhador(self, indice):
@@ -329,15 +349,27 @@ class Gerenciador:
                 enviar(estado="baixando", status="Lendo vídeo...", pct=0)
                 info = ydl.extract_info(pedido.url, download=False)
                 checar()
-                if info.get("is_live"):
-                    raise RuntimeError("Isso é uma live acontecendo agora. Espere ela terminar e baixe o VOD "
-                                       "(na Twitch: aba Vídeos do canal) ou um clipe.")
+                live = tipo_live(info)
+                if pedido.gravar and live != "gravar":
+                    raise RuntimeError(MSG_NAO_AO_VIVO)
+                if live == "vod" and not pedido.tem_trecho:
+                    raise RuntimeError(MSG_LIVE_TRECHO)
+                if live == "gravar" and not pedido.gravar:
+                    raise RuntimeError(MSG_LIVE_SEM_VOD)
+                if live == "outra":
+                    raise RuntimeError(MSG_LIVE_OUTRA)
                 titulo = info.get("title") or info.get("description") or pedido.url
                 titulo = re.sub(r"\s+", " ", titulo).strip()[:90]
                 enviar(titulo=f"[{plataforma(pedido.url)}] {titulo}")
                 destino = ydl.prepare_filename(info)
 
-                if pedido.tem_trecho:
+                if pedido.gravar:
+                    base = os.path.splitext(destino)[0] + time.strftime(" (gravado %d-%m %Hh%M)")
+                    arq = gravar_live(ydl, info, base, checar, lambda: self.pedir.get(pedido.id) == "parar",
+                                      lambda t, parcial: enviar(estado="baixando", status=t, arquivo_parcial=parcial))
+                    arquivos_finais.append(arq)
+                    itens_transcrever = [(info, arq)]
+                elif pedido.tem_trecho:
                     # trecho: baixa só a parte pedida (nucleo/trecho.py) e corta sem recodificar
                     item = next((e for e in (info.get("entries") or []) if e), info)
                     base = os.path.splitext(ydl.prepare_filename(item))[0]

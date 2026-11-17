@@ -25,6 +25,7 @@ import threading
 import time
 
 from .controle import Interrompido
+from .gravacao import entrada_ffmpeg
 from .ffmpeg import SEM_JANELA, exe_ffmpeg, exe_ffprobe, matar_ffmpegs_filhos, rodar_cancelavel
 
 BLOCO = 4 << 20            # 4 MB por pedido
@@ -472,13 +473,7 @@ class Trecho:
         intermediario = os.path.join(self.pasta_tmp, "hls.mkv")
         cmd = [exe_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-nostdin", "-progress", "pipe:1", "-nostats"]
         for fmt in self.formatos:
-            cab = {**(self.info.get("http_headers") or {}), **(fmt.get("http_headers") or {})}
-            cookies = self.ydl.cookiejar.get_cookies_for_url(fmt["url"])
-            if cookies:
-                cmd += ["-cookies", "".join(f"{c.name}={c.value}; path={c.path}; domain={c.domain};\r\n"
-                                            for c in cookies)]
-            if cab:
-                cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in cab.items())]
+            cmd += entrada_ffmpeg(self.ydl, self.info, fmt)
             cmd += ["-ss", f"{self.inicio:.3f}"]
             if self.fim is not None:
                 cmd += ["-t", f"{duracao:.3f}"]
