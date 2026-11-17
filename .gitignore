@@ -1,18 +1,59 @@
-# Python
+# ===================== NUNCA vão para o GitHub =====================
+
+# Preferências do usuário (podem ter caminhos e o arquivo de cookies)
+config.json
+config.tmp
+
+# Login, tokens, chaves de API e credenciais do Google
+cookies*.txt
+*cookies*.txt
+*.token
+token*.json
+*_token.json
+client_secret*.json
+credentials*.json
+credenciais*.json
+*.key
+*.pem
+.env
+.env.*
+
+# Programas grandes baixados/copiados em runtime
+ffmpeg.exe
+ffprobe.exe
+ffplay.exe
+deno.exe
+bin/
+
+# Modelos do Whisper (~460 MB)
+modelos/
+
+# Vídeos, áudios e partes de download
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.avi
+*.flv
+*.ts
+*.m4v
+*.mp3
+*.m4a
+*.wav
+*.opus
+*.aac
+*.ogg
+*.flac
+*.part
+*.ytdl
+*.part-Frag*
+
+# Bancos de dados locais (histórico, métricas)
+*.db
+*.sqlite
+*.sqlite3
+
+# ===================== Lixo de desenvolvimento =====================
 __pycache__/
 *.pyc
 .pytest_cache/
-
-# Gerados em runtime pelo app antigo
-app/config.json
-app/bin/
-app/modelos/
-
-# Gerados em runtime pelo Estúdio (os dados do usuário ficam em %LOCALAPPDATA%\EstudioViceCityDay)
-estudio/bin/
-estudio/modelos/
-
-# Nunca versionar credenciais
-*.token
-client_secret*.json
-cookies*.txt

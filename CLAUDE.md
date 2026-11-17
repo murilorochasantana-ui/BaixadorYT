@@ -202,6 +202,8 @@ Converte os erros do yt-dlp em mensagens em português com a solução: restriç
 - Não salvar senhas. O login é feito só por cookies do navegador ou arquivo cookies.txt.
 - Preferir sempre `pip install -U "yt-dlp[default]"` (inclui o `yt-dlp-ejs`, necessário para o YouTube junto com o Deno).
 - Manter tudo funcionando com duplo clique, sem terminal.
+- **Git e GitHub:** o repositório remoto é `origin` = https://github.com/murilorochasantana-ui/BaixadorYT.git, branch `main`. **Depois de cada commit de fase, fazer `git push origin main`.** Commits em português, um por fase (ou correção).
+- **Nunca enviar ao GitHub** (o `.gitignore` já cobre, mas confira antes de cada push com `git status --ignored` e `git ls-files`): `cookies.txt`, `config.json`, tokens, chaves de API, o JSON de credenciais do Google (`client_secret*.json`), a pasta `modelos/` do Whisper, `ffmpeg.exe`/`bin/` e qualquer vídeo ou áudio. Chaves e tokens ficam só no Cofre do Windows (`keyring`).
 - Antes de entregar uma mudança, testar a interface e a lógica isolada (ex.: `dividir`, os leitores de legenda). O arquivo `.pyw` pode ser importado com `importlib.machinery.SourceFileLoader`.
 
 ## 10. Estúdio ViceCityDay (Baixador YT 2.0, pasta `estudio/`)
