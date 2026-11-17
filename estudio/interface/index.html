@@ -27,17 +27,18 @@
     <section class="tela ativa" id="tela-baixar">
       <header class="cabecalho">
         <h1>Baixar vídeo</h1>
-        <p class="suave">Cole o link, confira a prévia e baixe. Grátis, sem anúncios e sem limite de tamanho.</p>
+        <p class="suave">Cole um ou vários links (um por linha), confira a prévia e baixe. Grátis, sem anúncios e sem limite de tamanho.</p>
       </header>
 
       <div class="colunas">
         <div class="coluna-form">
           <div class="cartao">
             <label for="link">Link do vídeo <span class="suave">(YouTube, TikTok, Instagram, Twitch, Pinterest, Facebook)</span></label>
-            <div class="linha">
-              <input id="link" type="text" placeholder="https://..." autocomplete="off" spellcheck="false">
+            <div class="linha topo">
+              <textarea id="link" rows="1" placeholder="https://...   (para vários, um link por linha)" autocomplete="off" spellcheck="false"></textarea>
               <button class="btn cinza" id="btn-colar">📋 Colar</button>
             </div>
+            <div id="link-info" class="suave pequeno escondido"></div>
 
             <div id="previa" class="previa escondido"></div>
 
@@ -65,6 +66,15 @@
 
             <div class="opcoes">
               <label class="marcar">
+                <input type="checkbox" id="trecho-ativo">
+                <span>✂️ Baixar só um trecho</span>
+              </label>
+              <div id="trecho" class="trecho escondido">
+                <label class="campo-curto">Início <input id="trecho-inicio" type="text" placeholder="17:44" spellcheck="false"></label>
+                <label class="campo-curto">Fim <input id="trecho-fim" type="text" placeholder="20:00 (vazio = até o final)" spellcheck="false"></label>
+                <span class="suave pequeno" id="trecho-ajuda">Aceita 17:44, 1:02:30 ou segundos (1064).</span>
+              </div>
+              <label class="marcar">
                 <input type="checkbox" id="modo-claude">
                 <span>📎 Modo Claude <span class="suave">(pasta por vídeo, partes de até</span></span>
                 <input type="number" id="limite" min="10" max="4000" step="50">
@@ -73,6 +83,10 @@
               <label class="marcar">
                 <input type="checkbox" id="transcricao">
                 <span>📝 Transcrição <span class="suave">(.md + .json com tempo de cada palavra)</span></span>
+              </label>
+              <label class="marcar">
+                <input type="checkbox" id="miniatura">
+                <span>🖼️ Miniatura <span class="suave">(capa do vídeo em .jpg)</span></span>
               </label>
             </div>
 
@@ -85,12 +99,28 @@
 
         <div class="coluna-fila">
           <div class="cartao fila-cartao">
-            <div class="fila-topo">
-              <h2>Downloads</h2>
-              <span class="suave pequeno" id="fila-resumo">Nada na fila</span>
+            <div class="abas-fila">
+              <button class="aba-fila ativa" data-painel="fila">Downloads <span id="fila-contador" class="contador escondido"></span></button>
+              <button class="aba-fila" data-painel="historico">Histórico</button>
             </div>
-            <ul id="fila" class="fila"></ul>
-            <div id="fila-vazia" class="vazio">Os vídeos que você baixar aparecem aqui.</div>
+
+            <div id="painel-fila">
+              <div class="fila-topo">
+                <label class="pequeno suave em-linha">Ao mesmo tempo
+                  <select id="paralelos" class="mini"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+                </label>
+                <label class="marcar pequeno"><input type="checkbox" id="notificacao"> 🔔 Avisar ao terminar</label>
+              </div>
+              <div class="suave pequeno" id="fila-resumo">Nada na fila</div>
+              <ul id="fila" class="fila"></ul>
+              <div id="fila-vazia" class="vazio">Os vídeos que você baixar aparecem aqui.</div>
+            </div>
+
+            <div id="painel-historico" class="escondido">
+              <input id="busca-historico" type="text" placeholder="🔎 Procurar por título, link ou pasta" spellcheck="false">
+              <ul id="historico" class="fila historico"></ul>
+              <div id="historico-vazio" class="vazio escondido">Nada no histórico ainda.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -109,7 +139,7 @@
     <div class="modal-caixa">
       <h3 id="modal-titulo"></h3>
       <div id="modal-texto"></div>
-      <div class="linha fim"><button class="btn destaque" id="modal-ok">OK</button></div>
+      <div class="linha fim" id="modal-botoes"></div>
     </div>
   </div>
 

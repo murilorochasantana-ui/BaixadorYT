@@ -118,6 +118,24 @@ def segmentos_de_falas(falas, duracao=None, maximo=10.0):
     return segs
 
 
+def cortar_segmentos(segmentos, inicio, fim=None):
+    """Mantém só o que fala dentro do trecho [inicio, fim] e recomeça a contagem do zero,
+    para os tempos baterem com o arquivo do trecho baixado."""
+    saida = []
+    for s in segmentos:
+        if s["fim"] <= inicio or (fim is not None and s["inicio"] >= fim):
+            continue
+        dentro = lambda w: w["fim"] > inicio and (fim is None or w["inicio"] < fim)
+        palavras = [{**w, "inicio": round(max(w["inicio"], inicio) - inicio, 3),
+                     "fim": round((min(w["fim"], fim) if fim is not None else w["fim"]) - inicio, 3)}
+                    for w in s.get("palavras", []) if dentro(w)]
+        texto = " ".join(w["palavra"] for w in palavras) if palavras else s["texto"]
+        fim_seg = min(s["fim"], fim) if fim is not None else s["fim"]
+        saida.append({"inicio": round(max(s["inicio"], inicio) - inicio, 3),
+                      "fim": round(fim_seg - inicio, 3), "texto": texto, "palavras": palavras})
+    return saida
+
+
 def ler_json3_segmentos(texto):
     """Lê json3 do YouTube com tempo de cada palavra quando ele existe (legenda automática traz
     tOffsetMs por palavra). Retorna (segmentos, precisas)."""

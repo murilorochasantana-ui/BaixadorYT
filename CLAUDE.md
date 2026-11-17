@@ -226,7 +226,24 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - Transcrição grava `.md` **e** `.json` (`segmentos[].palavras[]` com `inicio`/`fim`/`palavra`; `palavras_precisas` = true quando vem do Whisper ou da legenda automática json3 com `tOffsetMs`; senão o tempo é repartido pelo tamanho das palavras).
 - Whisper com `word_timestamps=True`.
 - `estudio/instalar.bat`, `atualizar.bat` e `instalar_transcricao.bat` usam `py -3.12` (o PC também tem Python 3.15).
-- **Fica para a 1B:** vários links de uma vez, pausar/cancelar/retomar, downloads em paralelo, histórico (SQLite), baixar trecho (`?t=`), miniatura (`writethumbnail`) e notificação do Windows.
+### Fase 1B (feita)
+- **Vários links:** o campo virou `textarea` (Enter baixa, Shift+Enter quebra linha; "Colar" acrescenta). `plataformas.separar_links` separa válidos e inválidos e tira repetidos do mesmo vídeo usando `chave_do_link` (`youtube:<id>`, `tiktok:<id>`, `twitch:<id>`…). Avançado e trecho só aceitam um link.
+- **Fila (`downloads.Gerenciador`)** com estados `fila → baixando → ok | erro | pausado | cancelado`. Pausar e cancelar durante o download marcam `pedir[id]`; os ganchos (`progress_hooks`, `postprocessor_hooks` e o `avisar` da transcrição/divisão) chamam `_checar` e lançam `Interrompido`.
+  - **Pausar** guarda o `.part`, e **Retomar** põe o mesmo `Pedido` de volta na fila (`continuedl=True` continua do `.part`; testado: pausou em 30%, voltou em 39%).
+  - **Cancelar** apaga `.part`, `-Frag*`, `.ytdl` e os formatos `.fNNN.` ainda não juntados.
+  - **Paralelo:** N threads de trabalho (`downloads_paralelos`, 1 a 4, padrão 2). Diminuir não interrompe quem já está baixando.
+- **Whisper uma vez por vez:** `transcricao.TRAVA_WHISPER`. Quem espera mostra "Esperando outra transcrição terminar…" e continua podendo ser pausado ou cancelado.
+- **Trecho** (`nucleo/tempos.py`): aceita 17:44, 1:02:30, 1064, 17m44s e o `?t=`/`start=`/`#t=` do link, que preenche o Início sozinho.
+  - Usa `download_ranges` + `force_keyframes_at_cuts`, e o nome ganha ` (trecho 17m44s-20m00s)` (sem ":", que o Windows não aceita).
+  - A legenda da plataforma é cortada com `legendas.cortar_segmentos`, com os tempos recomeçando do zero para bater com o arquivo; o Whisper já transcreve só o trecho.
+  - O `.json` traz `"trecho": {"inicio", "fim"}` em segundos do vídeo original.
+- **Histórico** (`nucleo/historico.py`): SQLite em `%LOCALAPPDATA%\EstudioViceCityDay\estudio.db`, guardando o pedido em JSON (sem login).
+  - Ao abrir, o que estava em andamento vira `interrompido` (botão "▶ Retomar").
+  - **Repetido** = mesmo `chave` + mesmo trecho com status `ok`. A interface pergunta: Baixar de novo / Pular os repetidos / Cancelar (`forcar` = `todos` | `pular`).
+- **Miniatura:** `writethumbnail` + `FFmpegThumbnailsConvertor` (jpg, `before_dl`), somado aos pós-processadores de áudio sem sobrescrever.
+- **Notificação** (`nucleo/notificacao.py`): toast pelo PowerShell (`-EncodedCommand`, sem instalar nada), com o AppID do PowerShell, então aparece como "Windows PowerShell". Na Fase 7, com o instalador, ganha nome próprio. Avisa em ok e erro; pausar e cancelar não avisam.
+- **Ainda não testado:** pausar no meio de um **trecho**. O trecho é baixado pelo ffmpeg, e o yt-dlp pode não chamar o gancho de progresso; nesse caso a pausa só vale quando o trecho termina.
+- O YouTube deu 403 no formato só-áudio 140 do vídeo de teste "Me at the zoo" (coisa do YouTube, não do Estúdio).
 
 ### Problemas descobertos na 1A (corrigidos no Estúdio e no `app/` antigo)
 - **faster-whisper 1.2.1 + PyAV 19 são incompatíveis** (`av.open(... metadata_errors=...)` dá TypeError). Nenhum dos dois apps usa mais o PyAV: `carregar_audio` lê o áudio com o ffmpeg (mono, 16 kHz, s16le → numpy) e entrega o array ao Whisper.
@@ -235,7 +252,7 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - `Start-Process -WindowStyle Hidden` esconde a janela do pywebview; para testar, abra com `pythonw.exe` normalmente.
 
 ### Testes
-- `cd estudio` e depois `py -3.12 -m pytest testes -q` (48 testes: plataformas, erros, config, qualidades, opções do yt-dlp, leitores de legenda, palavras, `.md`/`.json`, divisão com ffmpeg real, leitura de áudio, queda para CPU e estimativa de tamanho com o seletor real do yt-dlp).
+- `cd estudio` e depois `py -3.12 -m pytest testes -q`. São 90 testes. A 1B testa a fila com um `YoutubeDL` falso (`test_fase1b.py`, classe `YDLFalso`), que segura o download até o teste liberar. A 1A tem 48 testes: plataformas, erros, config, qualidades, opções do yt-dlp, leitores de legenda, palavras, `.md`/`.json`, divisão com ffmpeg real, leitura de áudio, queda para CPU e estimativa de tamanho com o seletor real do yt-dlp).
 - Interface sem o Python: `.claude/launch.json` → "interface-estudio" (servidor estático) e um `window.pywebview.api` falso no console.
 - Testado de verdade na 1A: prévia + download do YouTube (720p, estimativa de 476 KB contra 475 KB reais), `.md`/`.json` pela legenda, Whisper `tiny` com tempo de cada palavra (caindo para a CPU), Modo Claude dividindo em 2 partes e a janela abrindo com o config antigo importado.
 

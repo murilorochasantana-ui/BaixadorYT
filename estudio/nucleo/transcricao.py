@@ -4,11 +4,14 @@ legenda do criador > legenda automática > Whisper local > .md explicando como i
 import json
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 from .config import pasta_dados
 from .ffmpeg import SEM_JANELA, exe_ffmpeg
-from .legendas import (escolher_legenda, ler_json3_segmentos, ler_vtt, segmentos_de_falas, tempo)
+from .legendas import (cortar_segmentos, escolher_legenda, ler_json3_segmentos, ler_vtt, segmentos_de_falas,
+                       tempo)
+from .tempos import formatar_tempo
 
 VERSAO_JSON = 1
 
@@ -45,17 +48,27 @@ def _erro_de_placa(e):
     return any(x in t for x in ("cublas", "cudnn", "cuda", "cudart"))
 
 
+# Só uma transcrição pelo Whisper por vez: duas juntas (downloads em paralelo) travariam o PC.
+TRAVA_WHISPER = threading.Lock()
+
+
 def transcrever_whisper(arquivo, modelo, avisar):
     """Retorna (segmentos, fonte, idioma). Cada segmento traz as palavras com tempo real.
-    Tenta a placa de vídeo; se as bibliotecas CUDA não estiverem instaladas, usa o processador."""
-    avisar("Lendo o áudio...", 0)
-    audio = carregar_audio(arquivo)
+    Tenta a placa de vídeo; se as bibliotecas CUDA não estiverem instaladas, usa o processador.
+    `avisar` pode lançar exceção (pausar/cancelar): é chamado também enquanto espera a vez."""
+    while not TRAVA_WHISPER.acquire(timeout=0.5):
+        avisar("Esperando outra transcrição terminar...", None)
     try:
-        return _transcrever(audio, modelo, "auto", avisar)
-    except RuntimeError as e:
-        if not _erro_de_placa(e):
-            raise
-        return _transcrever(audio, modelo, "cpu", avisar)
+        avisar("Lendo o áudio...", 0)
+        audio = carregar_audio(arquivo)
+        try:
+            return _transcrever(audio, modelo, "auto", avisar)
+        except RuntimeError as e:
+            if not _erro_de_placa(e):
+                raise
+            return _transcrever(audio, modelo, "cpu", avisar)
+    finally:
+        TRAVA_WHISPER.release()
 
 
 def _transcrever(audio, modelo, dispositivo, avisar):
@@ -79,13 +92,22 @@ def falas_de_segmentos(segmentos):
     return [(s["inicio"], s["texto"]) for s in segmentos if s.get("texto")]
 
 
-def montar_md(info, falas, fonte, url):
+def _texto_trecho(trecho):
+    if not trecho:
+        return None
+    ini, fim = trecho
+    ate = formatar_tempo(fim) if fim is not None else "o fim"
+    return f"de {formatar_tempo(ini)} até {ate} do vídeo original (os tempos abaixo contam do início do trecho)"
+
+
+def montar_md(info, falas, fonte, url, trecho=None):
     linhas = [f"# {info.get('title') or 'Vídeo'}", ""]
     meta = [("Link", info.get("webpage_url") or url),
             ("Canal/Perfil", info.get("uploader") or info.get("channel")),
             ("Duração", tempo(info.get("duration")) if info.get("duration") else None),
             ("Publicado", info.get("upload_date") and
              f"{info['upload_date'][6:8]}/{info['upload_date'][4:6]}/{info['upload_date'][:4]}"),
+            ("Trecho", _texto_trecho(trecho)),
             ("Transcrição", fonte)]
     linhas += [f"- **{k}:** {v}" for k, v in meta if v]
     linhas += ["", "## Transcrição", ""]
@@ -104,7 +126,7 @@ def montar_md(info, falas, fonte, url):
     return "\n".join(linhas)
 
 
-def montar_json(info, segmentos, fonte, url, precisas, idioma=None):
+def montar_json(info, segmentos, fonte, url, precisas, idioma=None, trecho=None):
     return {
         "versao": VERSAO_JSON,
         "titulo": info.get("title"),
@@ -115,22 +137,27 @@ def montar_json(info, segmentos, fonte, url, precisas, idioma=None):
         "idioma": idioma or info.get("language"),
         # True = cada palavra tem o tempo real; False = tempo repartido pelo tamanho da palavra
         "palavras_precisas": bool(precisas),
+        # trecho baixado, em segundos do vídeo original (None = vídeo inteiro). Os tempos dos
+        # segmentos contam a partir do início do trecho, igual ao arquivo baixado.
+        "trecho": {"inicio": trecho[0], "fim": trecho[1]} if trecho else None,
         "segmentos": segmentos,
     }
 
 
-def gravar(destino_base, info, segmentos, fonte, url, precisas, idioma=None):
+def gravar(destino_base, info, segmentos, fonte, url, precisas, idioma=None, trecho=None):
     """Grava <base>.md e <base>.json. Retorna os dois caminhos."""
     md = destino_base + ".md"
     js = destino_base + ".json"
-    Path(md).write_text(montar_md(info, falas_de_segmentos(segmentos), fonte, url), encoding="utf-8")
-    Path(js).write_text(json.dumps(montar_json(info, segmentos, fonte, url, precisas, idioma),
+    Path(md).write_text(montar_md(info, falas_de_segmentos(segmentos), fonte, url, trecho), encoding="utf-8")
+    Path(js).write_text(json.dumps(montar_json(info, segmentos, fonte, url, precisas, idioma, trecho),
                                    ensure_ascii=False, indent=1), encoding="utf-8")
     return md, js
 
 
-def gerar_transcricao(ydl, item, arquivo, url, modelo, avisar):
-    """Cria <arquivo>.md e <arquivo>.json ao lado do vídeo. Retorna (md, json)."""
+def gerar_transcricao(ydl, item, arquivo, url, modelo, avisar, trecho=None):
+    """Cria <arquivo>.md e <arquivo>.json ao lado do vídeo. Retorna (md, json).
+    trecho = (início, fim) em segundos quando só um pedaço foi baixado: a legenda da plataforma
+    (que é do vídeo inteiro) é cortada no mesmo trecho; o Whisper já transcreve só o arquivo do trecho."""
     base = os.path.splitext(arquivo)[0]
     segmentos, fonte, precisas, idioma = None, None, False, None
     leg = escolher_legenda(item)
@@ -143,6 +170,8 @@ def gerar_transcricao(ydl, item, arquivo, url, modelo, avisar):
             else:
                 segmentos = segmentos_de_falas(ler_vtt(texto), item.get("duration"))
             fonte = leg[2]
+            if trecho and segmentos:
+                segmentos = cortar_segmentos(segmentos, trecho[0], trecho[1])
         except Exception:
             segmentos = None
     if not segmentos:
@@ -152,10 +181,10 @@ def gerar_transcricao(ydl, item, arquivo, url, modelo, avisar):
         else:
             segmentos, fonte = [], ("indisponível: o vídeo não tem legenda e o Whisper não está instalado "
                                     "(rode instalar_transcricao.bat)")
-    return gravar(base, item, segmentos, fonte, url, precisas, idioma)
+    return gravar(base, item, segmentos, fonte, url, precisas, idioma, trecho)
 
 
-def gravar_falha(arquivo, item, url, erro):
+def gravar_falha(arquivo, item, url, erro, trecho=None):
     """Se a transcrição falhar, o download NÃO falha: grava o .md com o erro."""
     base = os.path.splitext(arquivo)[0]
-    Path(base + ".md").write_text(montar_md(item, [], f"falhou: {erro}", url), encoding="utf-8")
+    Path(base + ".md").write_text(montar_md(item, [], f"falhou: {erro}", url, trecho), encoding="utf-8")

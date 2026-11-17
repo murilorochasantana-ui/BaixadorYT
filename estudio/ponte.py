@@ -18,11 +18,14 @@ from nucleo import config
 from nucleo.downloads import Gerenciador, Pedido
 from nucleo.erros import explicar_erro, limpar_mensagem
 from nucleo.ffmpeg import ffmpeg_disponivel
+from nucleo.historico import Historico
 from nucleo.login import LOGINS, NAVEGADORES_BLOQUEIAM, opcoes_login
-from nucleo.plataformas import link_valido
+from nucleo.notificacao import notificar
+from nucleo.plataformas import link_valido, separar_links
 from nucleo.previa import ler_previa
 from nucleo.qualidades import AVANCADO, ORDEM, nome_valido
 from nucleo.sistema import abrir, ler_area_transferencia, mostrar_no_explorer
+from nucleo.tempos import formatar_tempo, tempo_do_link, validar_trecho
 from nucleo.transcricao import whisper_disponivel
 
 AVISO_LINK = "Cole um link do YouTube, TikTok, Instagram, Twitch, Pinterest ou Facebook."
@@ -33,7 +36,13 @@ class Ponte:
         self._cfg = config.carregar()
         self._eventos = queue.Queue()
         self._janela = None
-        self._downloads = Gerenciador(self._eventos.put)
+        try:
+            self._historico = Historico()
+            self._historico.marcar_interrompidos()   # o que estava baixando quando o Estúdio fechou
+        except Exception:
+            self._historico = None                   # sem histórico o resto continua funcionando
+        self._downloads = Gerenciador(self._eventos.put, self._cfg.get("downloads_paralelos", 2),
+                                      historico=self._historico, ao_terminar=self._avisar_fim)
 
     # ---------- ligação com a janela ----------
     def _ligar(self, janela):
@@ -55,9 +64,21 @@ class Ponte:
             except Exception:
                 pass  # janela fechando
 
+    def _avisar_fim(self, pedido, ev):
+        """Notificação do Windows quando um download termina (se estiver ligada)."""
+        if not self._cfg.get("notificacao", True):
+            return
+        titulo = (ev.get("titulo") or pedido.url).split("] ", 1)[-1]
+        if ev["estado"] == "ok":
+            n = len(ev.get("arquivos") or [])
+            notificar("✔ Download concluído", titulo + (f" ({n} partes)" if n > 1 else ""))
+        else:
+            notificar("✘ Download com erro", f"{titulo}: {(ev.get('erro') or '').splitlines()[0]}")
+
     # ---------- chamados pelo JavaScript ----------
     def estado_inicial(self):
         colado = ler_area_transferencia().strip()
+        validos, _ = separar_links(colado)
         return {
             "cfg": self._cfg,
             "pasta_downloads": config.pasta_downloads(self._cfg),
@@ -69,14 +90,24 @@ class Ponte:
             "ffmpeg": ffmpeg_disponivel(),
             # componente que faz o yt-dlp parecer um navegador (o TikTok exige)
             "imita_navegador": importlib.util.find_spec("curl_cffi") is not None,
-            "link_colado": colado if link_valido(colado) else "",
+            "historico": self._historico is not None,
+            "link_colado": "\n".join(validos),
         }
 
     def colar(self):
         return ler_area_transferencia().strip()
 
+    def analisar_link(self, texto):
+        """Quantos links válidos há no texto e o início que vem no ?t= (quando é um link só)."""
+        validos, invalidos = separar_links(texto)
+        inicio = tempo_do_link(validos[0]) if len(validos) == 1 else None
+        return {"links": validos, "invalidos": invalidos, "inicio_link": inicio,
+                "inicio_texto": formatar_tempo(inicio) if inicio else ""}
+
     def salvar_config(self, mudancas):
         self._cfg = config.atualizar(self._cfg, mudancas)
+        if "downloads_paralelos" in (mudancas or {}):
+            self._downloads.definir_paralelos(self._cfg["downloads_paralelos"])
         return self._cfg
 
     def escolher_pasta(self, atual=""):
@@ -117,38 +148,114 @@ class Ponte:
             return {"ok": False, "erro": explicar_erro(limpar_mensagem(e), self._cfg.get("login", "Nenhum"))}
 
     def baixar(self, dados):
-        url = (dados.get("url") or "").strip()
-        if not link_valido(url):
-            return {"ok": False, "erro": AVISO_LINK}
+        """Põe na fila um ou vários links.
+        dados.forcar: None = avisar se já baixou; "todos" = baixar de novo; "pular" = pular os repetidos."""
+        links, invalidos = separar_links(dados.get("texto") or dados.get("url") or "")
+        if not links:
+            extra = f"\n\nNão reconheci: {', '.join(invalidos[:5])}" if invalidos else ""
+            return {"ok": False, "erro": AVISO_LINK + extra}
         qualidade = dados.get("qualidade")
         if not nome_valido(qualidade):
             return {"ok": False, "erro": "Escolha uma qualidade."}
         formato = dados.get("formato_avancado")
-        if qualidade == AVANCADO and not (formato and formato.get("id")):
-            return {"ok": False, "erro": "No modo Avançado, escolha um formato na tabela da prévia antes de baixar."}
+        if qualidade == AVANCADO:
+            if len(links) > 1:
+                return {"ok": False, "erro": "O modo Avançado funciona com um link por vez.\n\n"
+                                             "Para vários links, escolha uma qualidade da lista (ex.: 1080p)."}
+            if not (formato and formato.get("id")):
+                return {"ok": False, "erro": "No modo Avançado, escolha um formato na tabela da prévia antes de baixar."}
+        inicio = fim = None
+        trecho = dados.get("trecho") or {}
+        if trecho.get("ativo"):
+            if len(links) > 1:
+                return {"ok": False, "erro": "Para baixar só um trecho, cole um link por vez."}
+            try:
+                inicio, fim = validar_trecho(trecho.get("inicio"), trecho.get("fim"))
+            except ValueError as e:
+                return {"ok": False, "erro": str(e)}
         pasta = (dados.get("pasta") or "").strip()
         try:
             os.makedirs(pasta, exist_ok=True)
         except OSError:
             return {"ok": False, "erro": f"Não consegui usar a pasta:\n{pasta}\n\nEscolha outra em \"Salvar em\"."}
+
+        # já baixou antes?
+        pulados = 0
+        if self._historico and dados.get("forcar") != "todos":
+            repetidos = []
+            for link in links:
+                anterior = self._historico.procurar_duplicado(link, inicio, fim)
+                if anterior:
+                    repetidos.append({"url": link, "titulo": anterior["titulo"], "quando": anterior["criado_em"],
+                                      "pasta": anterior["pasta"]})
+            if repetidos and dados.get("forcar") != "pular":
+                return {"ok": False, "duplicados": repetidos, "total": len(links)}
+            if repetidos:
+                ja = {r["url"] for r in repetidos}
+                pulados = len(ja)
+                links = [l for l in links if l not in ja]
+
         try:
             limite = max(10, int(dados.get("limite_mb") or 400))
         except (TypeError, ValueError):
             limite = 400
         self.salvar_config({"pasta": pasta, "qualidade": qualidade, "modo_claude": bool(dados.get("modo_claude")),
-                            "limite_mb": limite, "transcricao": bool(dados.get("transcricao"))})
-        pedido = Pedido(
-            url=url, pasta=pasta, qualidade=qualidade,
-            formato_avancado=formato if qualidade == AVANCADO else None,
-            limite_mb=limite if dados.get("modo_claude") else None,
-            login_opts=opcoes_login(self._cfg), login=self._cfg.get("login", "Nenhum"),
-            modelo_whisper=self._cfg.get("modelo_whisper", "small") if dados.get("transcricao") else None,
-        )
-        return {"ok": True, "id": self._downloads.adicionar(pedido)}
+                            "limite_mb": limite, "transcricao": bool(dados.get("transcricao")),
+                            "miniatura": bool(dados.get("miniatura"))})
+        ids = []
+        for link in links:
+            pedido = Pedido(
+                url=link, pasta=pasta, qualidade=qualidade,
+                formato_avancado=formato if qualidade == AVANCADO else None,
+                limite_mb=limite if dados.get("modo_claude") else None,
+                login_opts=opcoes_login(self._cfg), login=self._cfg.get("login", "Nenhum"),
+                modelo_whisper=self._cfg.get("modelo_whisper", "small") if dados.get("transcricao") else None,
+                inicio=inicio, fim=fim, miniatura=bool(dados.get("miniatura")),
+            )
+            ids.append(self._downloads.adicionar(pedido))
+        return {"ok": True, "ids": ids, "invalidos": invalidos, "pulados": pulados}
+
+    # ---------- controle da fila ----------
+    def pausar(self, id_):
+        return self._downloads.pausar(id_)
+
+    def retomar(self, id_):
+        return self._downloads.retomar(id_)
+
+    def cancelar(self, id_):
+        return self._downloads.cancelar(id_)
 
     def na_fila(self):
         return self._downloads.na_fila()
 
+    # ---------- histórico ----------
+    def historico(self, busca=""):
+        if not self._historico:
+            return []
+        return self._historico.listar(busca)
+
+    def baixar_de_novo(self, registro):
+        """Baixa de novo (ou retoma, se ficou o .part) com as mesmas opções de antes."""
+        if not self._historico:
+            return {"ok": False, "erro": "O histórico não está disponível."}
+        linha = self._historico.obter(registro)
+        if not linha or not linha.get("pedido"):
+            return {"ok": False, "erro": "Não achei esse download no histórico."}
+        p = dict(linha["pedido"])
+        campos = {k: p.get(k) for k in ("url", "pasta", "qualidade", "formato_avancado", "limite_mb",
+                                        "modelo_whisper", "inicio", "fim", "miniatura")}
+        if not nome_valido(campos["qualidade"]):
+            campos["qualidade"] = ORDEM[0]
+        pedido = Pedido(**campos, login_opts=opcoes_login(self._cfg), login=self._cfg.get("login", "Nenhum"))
+        return {"ok": True, "id": self._downloads.adicionar(pedido)}
+
+    def apagar_do_historico(self, registro):
+        """Tira a linha do histórico (os arquivos baixados continuam na pasta)."""
+        if self._historico:
+            self._historico.apagar(registro)
+        return True
+
+    # ---------- arquivos ----------
     def abrir_pasta(self, caminho):
         try:
             os.makedirs(caminho, exist_ok=True)

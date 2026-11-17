@@ -34,11 +34,15 @@ PADRAO = {
     "transcricao": False,
     "modelo_whisper": "small",
     "aviso_gb": 3,                 # avisa na prévia quando o download passar disso
+    "downloads_paralelos": 2,      # quantos baixam ao mesmo tempo (1 a 4)
+    "miniatura": True,             # salva a capa do vídeo em .jpg ao lado
+    "notificacao": True,           # aviso do Windows quando um download termina
 }
 
 # chaves que podem ser trocadas pela interface
 CHAVES_EDITAVEIS = {"pasta", "qualidade", "login", "cookies_txt", "modo_claude", "limite_mb",
-                    "transcricao", "modelo_whisper", "aviso_gb", "pasta_raiz", "subpastas"}
+                    "transcricao", "modelo_whisper", "aviso_gb", "pasta_raiz", "subpastas",
+                    "downloads_paralelos", "miniatura", "notificacao"}
 
 
 def pasta_dados():
@@ -112,6 +116,11 @@ def atualizar(cfg, mudancas):
             limpas["limite_mb"] = max(10, int(limpas["limite_mb"]))
         except (TypeError, ValueError):
             limpas["limite_mb"] = 400
+    if "downloads_paralelos" in limpas:
+        try:
+            limpas["downloads_paralelos"] = max(1, min(4, int(limpas["downloads_paralelos"])))
+        except (TypeError, ValueError):
+            limpas["downloads_paralelos"] = 2
     novo = _mesclar(cfg, limpas)
     salvar(novo)
     return novo
