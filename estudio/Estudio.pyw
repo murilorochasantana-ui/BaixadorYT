@@ -1,3 +1,5 @@
+#! python3.12
+# (linha acima: faz o duplo clique usar o Python 3.12, onde o instalar.bat põe as bibliotecas)
 """
 Estúdio ViceCityDay
 Abre com duplo clique (sem terminal). Interface web numa janela do Windows (pywebview + WebView2).
