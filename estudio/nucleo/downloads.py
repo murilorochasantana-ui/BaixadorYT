@@ -161,6 +161,15 @@ class Gerenciador:
             self.pedir[id_] = "parar"
         return True
 
+    def baixar_inteiro(self, id_):
+        """Trecho no plano B lento: troca para baixar o vídeo inteiro e cortar no PC."""
+        with self.trava:
+            tr = self.trechos.get(id_)
+            if not tr or self.estados.get(id_) != "baixando":
+                return False
+            tr.quer_inteiro.set()
+        return True
+
     def pausar(self, id_):
         p = self.pedidos.get(id_)
         if p and p.gravar and self.estados.get(id_) == "baixando":
@@ -378,7 +387,8 @@ class Gerenciador:
                                 opcoes_inteiro=opcoes,
                                 ao_fallback=lambda motivo: enviar(
                                     aviso="O método rápido de trecho falhou e o Estúdio usou o do yt-dlp "
-                                          "(mais lento, mas funciona).", aviso_tecnico=motivo))
+                                          "(mais lento, mas funciona).", aviso_tecnico=motivo),
+                                ao_lento=lambda oferta: enviar(oferta_inteiro=oferta or ""))
                     self.trechos[pedido.id] = tr
                     arq, inicio_real, fim_real = tr.baixar()
                     trecho = (inicio_real, fim_real)

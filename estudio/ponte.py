@@ -270,6 +270,10 @@ class Ponte:
     def cancelar(self, id_):
         return self._downloads.cancelar(id_)
 
+    def baixar_inteiro(self, id_):
+        """Trecho lento (plano B): baixa o vídeo inteiro e corta no PC."""
+        return self._downloads.baixar_inteiro(id_)
+
     def na_fila(self):
         return self._downloads.na_fila()
 

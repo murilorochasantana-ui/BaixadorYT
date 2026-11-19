@@ -289,7 +289,7 @@ def test_cancelar_durante_o_ytdlp_encerra_os_ffmpeg_dele(tmp_path, arquivos, pla
     import threading
     plano_b.bloquear = threading.Event()
     mortos = []
-    monkeypatch.setattr(T, "matar_ffmpegs_filhos", lambda: (mortos.append(1), plano_b.bloquear.set()))
+    monkeypatch.setattr(T, "matar_ffmpegs_filhos", lambda contendo=None: (mortos.append(contendo), plano_b.bloquear.set()))
     inicio = time.time()
 
     def checar():
@@ -298,7 +298,73 @@ def test_cancelar_durante_o_ytdlp_encerra_os_ffmpeg_dele(tmp_path, arquivos, pla
     tr, motivos, _ = _trecho_b(tmp_path, arquivos, YDLQueFalha(OSError("403")), checar=checar)
     with pytest.raises(Interrompido):
         tr.baixar()
-    assert mortos == [1] and time.time() - inicio < 5
+    # só os ffmpeg DESTE download (pela pasta temporária): os outros downloads em paralelo continuam
+    assert mortos == [tr.pasta_tmp] and time.time() - inicio < 5
+
+
+def test_plano_b_lento_oferece_baixar_inteiro_e_troca(tmp_path, arquivos, plano_b, monkeypatch):
+    import threading
+    monkeypatch.setattr(T, "ESPERA_OFERTA", 0.3)
+    plano_b.bloquear = threading.Event()        # o método lento "não anda"
+    mortos = []
+
+    def matar(contendo=None):
+        mortos.append(contendo)
+        plano_b.bloquear.set()
+        plano_b.bloquear = None                 # o próximo yt-dlp (vídeo inteiro) entrega na hora
+    monkeypatch.setattr(T, "matar_ffmpegs_filhos", matar)
+    ofertas = []
+    info = {"id": "x", "title": "t", "duration": 60, "requested_formats": _formatos(*arquivos)}
+    tr = T.Trecho(YDLQueFalha(OSError("403")), info, str(tmp_path / "Live (trecho)"), 2, 8, lambda: None,
+                  lambda *a: None, None, {"format": "x"}, lambda m: None,
+                  ao_lento=lambda o: (ofertas.append(o), o and tr.quer_inteiro.set()))
+    saida, inicio_real, fim = tr.baixar()
+    assert ofertas[0].startswith("Vídeo inteiro: ~") and ofertas[-1] is None   # mostrou e depois tirou o botão
+    assert mortos == [tr.pasta_tmp]
+    assert "inteiro.%(ext)s" in plano_b.opcoes["outtmpl"] and "download_ranges" not in plano_b.opcoes
+    assert os.path.exists(saida) and duracao(saida) == pytest.approx(8 - inicio_real, abs=0.3)
+
+
+# ---------- HLS (YouTube com login; Twitch) ----------
+@pytest.fixture(scope="module")
+def hls(tmp_path_factory):
+    """60 s em HLS com segmentos .ts de 4 s (o tempo dos pacotes começa em 1,4 s, como no ffmpeg/Twitch)."""
+    d = tmp_path_factory.mktemp("hls")
+    m3u8 = d / "index.m3u8"
+    _ff("-f", "lavfi", "-i", "testsrc=s=320x240:r=25:d=60", "-f", "lavfi", "-i", "sine=d=60",
+        "-c:v", "libx264", "-preset", "ultrafast", "-g", "50", "-sc_threshold", "0", "-c:a", "aac", "-shortest",
+        "-f", "hls", "-hls_time", "4", "-hls_playlist_type", "vod", str(m3u8))
+    return m3u8
+
+
+class YDLArquivos:
+    """Lê file:// como o ydl.urlopen leria https:// (sem Range: segmento inteiro)."""
+    def __init__(self):
+        self.urls = []
+
+    def urlopen(self, req):
+        from urllib.request import url2pathname
+        self.urls.append(req.url)
+        assert "Range" not in req.headers
+        with open(url2pathname(req.url[len("file:"):]), "rb") as f:
+            return Resposta(f.read())
+
+
+def test_hls_baixa_so_os_segmentos_do_trecho(tmp_path, hls):
+    ydl = YDLArquivos()
+    fmt = {"format_id": "301", "url": hls.as_uri(), "ext": "mp4", "protocol": "m3u8_native",
+           "vcodec": "avc1.64002A", "acodec": "mp4a.40.2"}
+    info = {"id": "x", "title": "t", "duration": 60, "requested_formats": [fmt]}
+    motivos = []
+    tr = T.Trecho(ydl, info, str(tmp_path / "Live (trecho)"), 21, 33, lambda: None, lambda *a: None,
+                  ao_fallback=motivos.append)
+    saida, inicio_real, fim = tr.baixar()
+    assert motivos == [] and saida.endswith(".mp4") and fluxos(saida) == ["audio", "video"]
+    assert 18.9 <= inicio_real <= 21                       # quadro-chave antes do início (a cada 2 s)
+    assert duracao(saida) == pytest.approx(33 - inicio_real, abs=0.3)
+    segmentos = [u for u in ydl.urls if u.endswith(".ts")]
+    assert len(segmentos) == 4                             # 20-24, 24-28, 28-32, 32-36: só o trecho
+    assert not os.path.exists(tr.pasta_tmp)
 
 
 def test_ytdlp_com_audio_mp3(tmp_path, arquivos, plano_b):

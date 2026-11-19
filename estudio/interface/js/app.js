@@ -445,6 +445,11 @@ function botoesDoItem(it) {
     b.push(acao(it, "⏹ Parar e salvar", "destaque", "Parando…", api.parar));
     b.push(acao(it, "✖ Cancelar", "perigo", "Cancelando…", api.cancelar));
   } else if (it.estado === "fila" || it.estado === "baixando") {
+    if (it.estado === "baixando" && ev.oferta_inteiro) {   // trecho no plano B lento
+      const bi = acao(it, "⬇ Baixar inteiro e cortar", "destaque", "Trocando…", api.baixar_inteiro);
+      bi.title = `${ev.oferta_inteiro}. O método lento está demorando: baixar o vídeo inteiro e cortar no PC costuma ser bem mais rápido.`;
+      b.push(bi);
+    }
     b.push(acao(it, "⏸ Pausar", "cinza", "Pausando…", api.pausar));
     b.push(acao(it, "✖ Cancelar", "perigo", "Cancelando…", api.cancelar));
   } else if (it.estado === "pausado") {
@@ -488,6 +493,7 @@ window.estudio = {
       if (ev.vel) it.detalhe.textContent = `${ev.vel} • falta ${ev.eta || "?"}`;
       if (ev.aviso) { it.aviso.textContent = `ℹ ${ev.aviso}`; it.aviso.title = ev.aviso_tecnico || ""; it.aviso.classList.remove("escondido"); }
       Object.assign(it.ultimo, ev);
+      if (ev.oferta_inteiro !== undefined && it.estado === "baixando") botoesDoItem(it);   // mostra/tira o botão
       if (ev.estado && ev.estado !== it.estado || !it.acoes.childElementCount) {
         it.estado = ev.estado;
         it.li.className = `item ${ev.estado}`;

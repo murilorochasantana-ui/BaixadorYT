@@ -25,12 +25,13 @@ import threading
 import time
 
 from .controle import Interrompido
-from .gravacao import entrada_ffmpeg
+from .gravacao import _ler as _ler_playlist, _segmentos, entrada_ffmpeg
 from .ffmpeg import SEM_JANELA, exe_ffmpeg, exe_ffprobe, matar_ffmpegs_filhos, rodar_cancelavel
 
 BLOCO = 4 << 20            # 4 MB por pedido
 PARALELOS = 6              # pedidos ao mesmo tempo
 LEITURA = 256 << 10        # lê de 256 KB em 256 KB (para parar rápido)
+ESPERA_OFERTA = 20         # segundos no plano B antes de oferecer "baixar inteiro e cortar"
 EXTS_MP4 = ("mp4", "m4a", "m4v", "mov")
 AUDIO_CONVERTIDO = {"mp3": ["-c:a", "libmp3lame", "-b:a", "320k"], "wav": ["-c:a", "pcm_s16le"]}
 
@@ -125,7 +126,8 @@ def esperar_liberacao(formatos, checar, avisar):
         time.sleep(0.25)
 
 
-def _pedido(ydl, fmt, a, b):
+def _pedido(ydl, fmt, a, b, url=None):
+    """Pedido pela conexão do yt-dlp. Com a/b = None pede o arquivo todo (segmento HLS)."""
     from yt_dlp.networking import Request
     ext = {}
     if fmt.get("impersonate"):     # mesmo pedido que o yt-dlp faria (alguns sites exigem parecer navegador)
@@ -133,8 +135,10 @@ def _pedido(ydl, fmt, a, b):
         alvo = FileDownloader(ydl, {})._get_impersonate_target(fmt)
         if alvo is not None:
             ext["impersonate"] = alvo
-    cab = {"Accept-Encoding": "identity", **(fmt.get("http_headers") or {}), "Range": f"bytes={a}-{b}"}
-    return ydl.urlopen(Request(fmt["url"], None, cab, extensions=ext))
+    cab = {"Accept-Encoding": "identity", **(fmt.get("http_headers") or {})}
+    if a is not None:
+        cab["Range"] = f"bytes={a}-{b}"
+    return ydl.urlopen(Request(url or fmt["url"], None, cab, extensions=ext))
 
 
 def ler_bytes(ydl, fmt, a, b):
@@ -144,24 +148,39 @@ def ler_bytes(ydl, fmt, a, b):
 
 class Progresso:
     """Soma os bytes baixados por todas as threads e calcula velocidade."""
-    def __init__(self, total, ja_tinha, avisar):
+    def __init__(self, total, ja_tinha, avisar, partes=0, partes_prontas=0):
         self.total, self.feito, self.avisar = total, ja_tinha, avisar
         self.inicio, self.ultimo, self.trava = time.time(), 0, threading.Lock()
         self.base = ja_tinha
+        # HLS: o tamanho total não é conhecido; é estimado pela média das partes já baixadas
+        self.partes, self.prontas = partes, partes_prontas
 
     def somar(self, n):
         with self.trava:
             self.feito += n
+
+    def concluiu(self):
+        with self.trava:
+            self.prontas += 1
+
+    def _total(self):
+        if self.total:
+            return self.total
+        if self.partes and self.prontas:
+            return max(self.feito * self.partes / self.prontas, self.feito)
+        return 0
 
     def mostrar(self, rotulo="Baixando trecho"):
         agora = time.time()
         if agora - self.ultimo < 0.4:
             return
         self.ultimo = agora
+        total = self._total()
         vel = (self.feito - self.base) / max(agora - self.inicio, 0.1)
-        pct = self.feito * 100 / self.total if self.total else 0
-        falta = (self.total - self.feito) / vel if vel > 0 else None
-        self.avisar(f"{rotulo} {pct:.0f}% • {self.feito / 2**20:.0f} de {self.total / 2**20:.0f} MB",
+        pct = min(self.feito * 100 / total, 99.9) if total else 0
+        falta = (total - self.feito) / vel if vel > 0 and total else None
+        de = f" de {'~' if not self.total else ''}{total / 2**20:.0f}" if total else ""
+        self.avisar(f"{rotulo} {pct:.0f}% • {self.feito / 2**20:.0f}{de} MB",
                     pct, f"{vel / 2**20:.1f} MB/s", _tempo_curto(falta))
 
 
@@ -173,12 +192,13 @@ def _tempo_curto(seg):
 
 
 def baixar_faixas(ydl, faixas, pasta_tmp, checar, progresso):
-    """Baixa vários (fmt, a, b, arquivo) ao mesmo tempo. Arquivos já completos são pulados (retomar)."""
+    """Baixa vários (fmt, a, b, arquivo[, url]) ao mesmo tempo. Arquivos já completos são pulados (retomar).
+    Com a/b = None baixa a `url` inteira (segmento HLS: tamanho desconhecido)."""
     parar = threading.Event()
 
-    def um(fmt, a, b, arq):
-        esperado = b - a + 1
-        if os.path.exists(arq) and os.path.getsize(arq) == esperado:
+    def um(fmt, a, b, arq, url=None):
+        esperado = b - a + 1 if a is not None else None
+        if os.path.exists(arq) and (esperado is None or os.path.getsize(arq) == esperado):
             return
         tmp = arq + ".part"
         for tentativa in range(3):
@@ -186,7 +206,7 @@ def baixar_faixas(ydl, faixas, pasta_tmp, checar, progresso):
                 return
             try:
                 feito = 0
-                with _pedido(ydl, fmt, a, b) as r, open(tmp, "wb") as saida:
+                with _pedido(ydl, fmt, a, b, url) as r, open(tmp, "wb") as saida:
                     while not parar.is_set():
                         pedaco = r.read(LEITURA)
                         if not pedaco:
@@ -196,9 +216,10 @@ def baixar_faixas(ydl, faixas, pasta_tmp, checar, progresso):
                         progresso.somar(len(pedaco))
                 if parar.is_set():
                     return
-                if feito != esperado:
-                    raise IOError(f"pedaço incompleto ({feito} de {esperado} bytes)")
+                if feito != esperado and (esperado is not None or feito == 0):
+                    raise IOError(f"pedaço incompleto ({feito} de {esperado or '?'} bytes)")
                 os.replace(tmp, arq)
+                progresso.concluiu()
                 return
             except Exception:
                 progresso.somar(-feito)
@@ -258,21 +279,23 @@ def quadro_chave_antes(arquivo, alvo):
     return max(chaves) if chaves else None
 
 
-def cortar(entradas, inicio, fim, saida, checar, avisar, extra_saida=()):
+def cortar(entradas, inicio, fim, saida, checar, avisar, extra_saida=(), deslocamentos=None):
     """Junta e corta as peças baixadas, sem recodificar o vídeo.
-    entradas: lista de arquivos (cada um com o tempo ORIGINAL do vídeo nos pacotes).
+    entradas: lista de arquivos. Tempo dentro do arquivo = tempo ORIGINAL do vídeo + deslocamento
+    (0 quando os pacotes já trazem o tempo original; no HLS cada peça tem o seu).
     Começa no quadro-chave antes de `inicio`. Retorna o início real (segundos do vídeo original)."""
     infos = [info_local(a) for a in entradas]
+    desl = list(deslocamentos or [0.0] * len(entradas))
     inicio_real = inicio
-    for arq, (_ini, tem_video) in zip(entradas, infos):
+    for arq, (_ini, tem_video), d in zip(entradas, infos, desl):
         if tem_video:
-            k = quadro_chave_antes(arq, inicio)
+            k = quadro_chave_antes(arq, inicio + d)
             if k is not None:
-                inicio_real = k
+                inicio_real = k - d
             break
     cmd = [exe_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-nostdin"]
-    for arq, (ini_arq, _tem_video) in zip(entradas, infos):
-        cmd += ["-ss", f"{max(inicio_real - ini_arq, 0):.3f}", "-i", arq]
+    for arq, (ini_arq, _tem_video), d in zip(entradas, infos, desl):
+        cmd += ["-ss", f"{max(inicio_real + d - ini_arq, 0):.3f}", "-i", arq]
     if fim is not None:
         cmd += ["-t", f"{fim - inicio_real:.3f}"]
     for i in range(len(entradas)):
@@ -354,8 +377,12 @@ class Trecho:
     `avisar(status, pct, vel, eta)` mostra o progresso."""
 
     def __init__(self, ydl, info, base_saida, inicio, fim, checar, avisar, codec_convertido=None, opcoes_inteiro=None,
-                 ao_fallback=lambda motivo: None):
+                 ao_fallback=lambda motivo: None, ao_lento=lambda oferta: None):
         self.ydl, self.info, self.base = ydl, info, base_saida
+        # Plano B lento: oferece baixar o vídeo inteiro e cortar no PC (ao_lento(texto) mostra o botão,
+        # ao_lento(None) tira). O botão liga `quer_inteiro`.
+        self.ao_lento = ao_lento
+        self.quer_inteiro = threading.Event()
         self.inicio, self.fim = inicio or 0.0, fim
         self.checar, self.avisar = checar, avisar
         self.formatos = info.get("requested_formats") or [info]
@@ -381,7 +408,15 @@ class Trecho:
             if caminho == "indice":
                 inicio_real = self._por_indice()
             elif caminho == "hls":
-                inicio_real = self._hls()
+                try:
+                    inicio_real = self._hls_nativo()
+                except Interrompido:
+                    raise
+                except Exception as e:   # playlist diferente do esperado: tenta o ffmpeg lendo o HLS
+                    self.motivo_nativo = f"{type(e).__name__}: {e}"[:150]
+                    shutil.rmtree(self.pasta_tmp, ignore_errors=True)
+                    os.makedirs(self.pasta_tmp, exist_ok=True)
+                    inicio_real = self._hls()
             else:
                 inicio_real = self._inteiro()
         except Interrompido:
@@ -391,7 +426,8 @@ class Trecho:
                 raise
             # O método rápido falhou (YouTube mudou o índice, 403, rede, arquivo inesperado...):
             # volta sozinho para o método do yt-dlp, mais lento, mas que funciona.
-            self.ao_fallback(f"{type(e).__name__}: {e}"[:200])
+            antes = getattr(self, "motivo_nativo", None)
+            self.ao_fallback((f"{antes} | " if antes else "") + f"{type(e).__name__}: {e}"[:200])
             shutil.rmtree(self.pasta_tmp, ignore_errors=True)
             os.makedirs(self.pasta_tmp, exist_ok=True)
             self.checar()
@@ -409,15 +445,17 @@ class Trecho:
                     except OSError:
                         pass
 
-    def _finalizar(self, pecas):
+    def _finalizar(self, pecas, deslocamentos=None):
         """Corta as peças e, se for MP3/WAV, converte."""
         self.saida_real = self.saida
         if self.codec in AUDIO_CONVERTIDO:
             intermediario = os.path.join(self.pasta_tmp, "audio_cortado.m4a")
-            inicio_real = cortar(pecas, self.inicio, self.fim, intermediario, self.checar, self.avisar)
+            inicio_real = cortar(pecas, self.inicio, self.fim, intermediario, self.checar, self.avisar,
+                                 deslocamentos=deslocamentos)
             converter_audio(intermediario, self.saida, self.codec, self.checar, self.avisar)
             return inicio_real
-        return cortar(pecas, self.inicio, self.fim, self.saida, self.checar, self.avisar)
+        return cortar(pecas, self.inicio, self.fim, self.saida, self.checar, self.avisar,
+                      deslocamentos=deslocamentos)
 
     # ---------- caminho 1: índice ----------
     def _por_indice(self):
@@ -465,7 +503,56 @@ class Trecho:
             pecas.append(peca)
         return self._finalizar(pecas)
 
-    # ---------- caminho 2: HLS (Twitch) ----------
+    # ---------- caminho 2: HLS (Twitch; YouTube com login) ----------
+    def _hls_nativo(self):
+        """Lê a playlist HLS e baixa só os segmentos do trecho, vários ao mesmo tempo, pela conexão do
+        yt-dlp (mesmos cookies e cabeçalhos). Com login, o YouTube só entrega HLS, e o ffmpeg lendo o
+        HLS do YouTube direto falha ("Error muxing a packet")."""
+        esperar_liberacao(self.formatos, self.checar, lambda t: self.avisar(t, 0, "", ""))
+        planos = []
+        for i, fmt in enumerate(self.formatos):
+            self.checar()
+            self.avisar("Lendo a lista de pedaços do vídeo...", 0, "", "")
+            texto = _ler_playlist(self.ydl, fmt, fmt["url"]).decode("utf-8", "replace")
+            if "#EXT-X-STREAM-INF" in texto or "#EXT-X-MAP" in texto or "#EXT-X-BYTERANGE" in texto \
+                    or any(l.startswith("#EXT-X-KEY") and "METHOD=NONE" not in l for l in texto.splitlines()):
+                raise SemIndice("playlist HLS com recurso não suportado (criptografia, init ou byterange)")
+            t, sel = 0.0, []
+            for n, (url, dur, _titulo) in enumerate(_segmentos(texto, fmt["url"])):
+                if t + dur > self.inicio and (self.fim is None or t < self.fim):
+                    sel.append((n, url, t))
+                t += dur
+            if not sel:
+                raise SemIndice("trecho fora do vídeo")
+            planos.append((i, fmt, sel))
+        manifesto = os.path.join(self.pasta_tmp, "plano.json")
+        assinatura = ["hls"] + [[f.get("format_id"), s[0][0], s[-1][0]] for _i, f, s in planos]
+        try:
+            if json.load(open(manifesto, encoding="utf-8")) != assinatura:
+                raise ValueError
+        except (OSError, ValueError):
+            shutil.rmtree(self.pasta_tmp, ignore_errors=True)
+            os.makedirs(self.pasta_tmp, exist_ok=True)
+            json.dump(assinatura, open(manifesto, "w", encoding="utf-8"))
+        faixas = [(fmt, None, None, os.path.join(self.pasta_tmp, f"h{i}_{n:06d}.ts"), url)
+                  for i, fmt, sel in planos for n, url, _t in sel]
+        prontas = [f for f in faixas if os.path.exists(f[3])]
+        progresso = Progresso(None, sum(os.path.getsize(f[3]) for f in prontas), self.avisar,
+                              partes=len(faixas), partes_prontas=len(prontas))
+        baixar_faixas(self.ydl, faixas, self.pasta_tmp, self.checar, progresso)
+        pecas, deslocamentos = [], []
+        for i, fmt, sel in planos:   # junta os segmentos de cada formato (TS pode ser emendado direto)
+            self.checar()
+            peca = os.path.join(self.pasta_tmp, f"peca{i}.ts")
+            with open(peca, "wb") as saida:
+                for n, _url, _t in sel:
+                    with open(os.path.join(self.pasta_tmp, f"h{i}_{n:06d}.ts"), "rb") as entrada:
+                        shutil.copyfileobj(entrada, saida, 1 << 20)
+            # o tempo dentro do .ts não é o do vídeo: o 1º segmento escolhido começa em sel[0][2]
+            deslocamentos.append(info_local(peca)[0] - sel[0][2])
+            pecas.append(peca)
+        return self._finalizar(pecas, deslocamentos)
+
     def _hls(self):
         esperar_liberacao(self.formatos, self.checar, lambda t: self.avisar(t, 0, "", ""))
         duracao = (self.fim - self.inicio) if self.fim is not None else \
@@ -533,15 +620,44 @@ class Trecho:
                 erro.append(e)
         fio = threading.Thread(target=trabalho, daemon=True)
         fio.start()
+        comeco, ofertou, ultimo = time.time(), False, 0
+        esperado = self._tamanho_estimado((self.fim if self.fim is not None else self.info.get("duration") or 0)
+                                          - self.inicio)
         try:
             while fio.is_alive():
                 self.checar()
-                self.avisar("Baixando o trecho pelo yt-dlp (mais lento)...", None, "", "")
+                if self.quer_inteiro.is_set():   # usuário escolheu baixar inteiro e cortar no PC
+                    break
+                agora = time.time()
+                if agora - ultimo >= 1:
+                    ultimo = agora
+                    feito = sum(os.path.getsize(os.path.join(self.pasta_tmp, x)) for x in os.listdir(self.pasta_tmp)
+                                if x.startswith("ytdlp."))
+                    vel = feito / max(agora - comeco, 0.1)
+                    falta = (esperado - feito) / vel if esperado and vel > 0 and feito < esperado else None
+                    pct = min(feito * 100 / esperado, 99) if esperado else None
+                    self.avisar(f"Baixando o trecho pelo yt-dlp (mais lento) • {feito / 2**20:.0f} MB", pct,
+                                f"{vel / 2**20:.1f} MB/s", _tempo_curto(falta))
+                    # depois de 20 s, se for demorar mais de 5 min (ou nem der para saber), oferece o inteiro
+                    if not ofertou and agora - comeco > ESPERA_OFERTA and (falta is None or falta > 300):
+                        ofertou = True
+                        inteiro = self._tamanho_estimado(None)
+                        self.ao_lento(f"Vídeo inteiro: ~{inteiro / 2**30:.1f} GB" if inteiro else "Vídeo inteiro")
                 fio.join(0.25)
         except BaseException:
-            matar_ffmpegs_filhos()
+            matar_ffmpegs_filhos(self.pasta_tmp)
             fio.join(timeout=15)
             raise
+        finally:
+            if ofertou:
+                self.ao_lento(None)
+        if self.quer_inteiro.is_set() and fio.is_alive():
+            self.avisar("Trocando para: baixar o vídeo inteiro e cortar no PC...", 0, "", "")
+            matar_ffmpegs_filhos(self.pasta_tmp)
+            fio.join(timeout=15)
+            shutil.rmtree(self.pasta_tmp, ignore_errors=True)
+            os.makedirs(self.pasta_tmp, exist_ok=True)
+            return self._inteiro()
         if erro:
             raise erro[0]
         baixado = ((resultado.get("info") or {}).get("requested_downloads") or [{}])[-1].get("filepath")
@@ -557,6 +673,19 @@ class Trecho:
             self.saida_real = f"{self.base}{os.path.splitext(baixado)[1]}"
             os.replace(baixado, self.saida_real)
         return self.inicio                 # o corte do yt-dlp é exato: começa onde foi pedido
+
+    def _tamanho_estimado(self, segundos):
+        """Bytes estimados de `segundos` do vídeo (None = o vídeo todo), pelos formatos escolhidos."""
+        dur = self.info.get("duration") or 0
+        total = 0
+        for f in self.formatos:
+            tam = f.get("filesize") or f.get("filesize_approx")
+            if not tam and f.get("tbr") and dur:
+                tam = f["tbr"] * 125 * dur
+            total += tam or 0
+        if not total or not dur:
+            return None
+        return total * min(segundos / dur, 1) if segundos else total
 
     # ---------- caminho 3: inteiro + corte ----------
     def _inteiro(self):

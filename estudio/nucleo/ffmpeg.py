@@ -63,13 +63,19 @@ def matar_arvore(proc):
         proc.kill()
 
 
-def matar_ffmpegs_filhos():
+def matar_ffmpegs_filhos(contendo=None):
     """Encerra os ffmpeg abertos POR este programa (ex.: os que o yt-dlp inicia por dentro e que ele
-    não deixa cancelar). Só mexe nos filhos diretos deste processo, nunca em outros ffmpeg do PC."""
+    não deixa cancelar). Só mexe nos filhos diretos deste processo, nunca em outros ffmpeg do PC.
+    `contendo`: só os que têm esse texto na linha de comando (a pasta temporária de UM download),
+    para não derrubar os outros downloads que rodam ao mesmo tempo."""
     if os.name != "nt":
         return
+    filtro = ""
+    if contendo:
+        texto = str(contendo).replace("'", "''")
+        filtro = f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{texto}') }} | "
     script = (f"Get-CimInstance Win32_Process -Filter \"ParentProcessId={os.getpid()} AND Name='ffmpeg.exe'\" | "
-              "ForEach-Object { taskkill /F /T /PID $_.ProcessId | Out-Null }")
+              + filtro + "ForEach-Object { taskkill /F /T /PID $_.ProcessId | Out-Null }")
     subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **SEM_JANELA)
 

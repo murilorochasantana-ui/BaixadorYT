@@ -288,6 +288,14 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - Testes: `testes/test_fase1c.py` (12). Inclui uma "live" HLS local (sem `ENDLIST`, com segmentos `Amazon|…`) lida por `file://`, além do limite da prévia. Total: 166.
 - **Fica para depois:** YouTube ao vivo; mid-roll da Twitch no meio da gravação (os segmentos são pulados, então fica um corte de tempo no `.mp4`); a playlist de uma gravação muito longa pode expirar (o token da Twitch), e aí a gravação para sozinha e salva o que já tem depois de 10 falhas seguidas.
 
+### Bug do trecho com login (19/11, corrigido)
+- **Com Login = Firefox (cookies), o YouTube NÃO entrega os MP4 com índice (https):** só HLS (`m3u8_native`, ex.: formato 301 = 1080p60 com áudio junto, segmentos `.ts` de 5 s). O caminho virava "hls", e o **ffmpeg lendo o HLS do YouTube falha em 3 s ("Error muxing a packet")**. Caía no plano B (o yt-dlp recodificando), a 0,0 MB/s. Não tinha relação com 1080p nem com os 4 ao mesmo tempo.
+- **Correção, `Trecho._hls_nativo`:** lê a playlist, escolhe os segmentos do trecho pela soma dos `#EXTINF` e baixa vários ao mesmo tempo pelo `ydl.urlopen` (os blocos ficam em `h{i}_{n}.ts` e são retomáveis). Depois emenda os `.ts` e corta com `-c copy`. Como o tempo dentro do `.ts` pode não ser o do vídeo, `cortar(..., deslocamentos=)` recebe `start_time` da peça menos o início do 1º segmento. No YouTube, conferido: pts = soma dos EXTINF.
+  - Playlist com criptografia, `EXT-X-MAP` ou byterange gera `SemIndice` → tenta `_hls` (ffmpeg) → plano B.
+  - Medido: 4 trechos de 2 min em 1080p com Firefox, 4 ao mesmo tempo, terminaram em ~80 s (incluindo ler os cookies), sem plano B.
+- **Plano B lento:** mostra MB, MB/s e quanto falta, medindo o `ytdlp.*.part`. Depois de `ESPERA_OFERTA` (20 s), se for demorar mais de 5 min, o item da fila ganha o botão "⬇ Baixar inteiro e cortar" (evento `oferta_inteiro`, `Ponte.baixar_inteiro` → `Trecho.quer_inteiro`). Ele encerra o ffmpeg do yt-dlp e cai no `_inteiro`.
+- `matar_ffmpegs_filhos(contendo=pasta_tmp)` só encerra os ffmpeg daquele download. Antes, cancelar um plano B derrubava os ffmpeg dos outros downloads em paralelo.
+
 ## Modelo do Claude por fase (regra do usuário)
 **Cada fase começa numa sessão NOVA do Claude Code, já aberta com o modelo certo** (não continuar uma fase na sessão da anterior). No fim de cada fase, lembrar em destaque qual modelo usar na próxima.
 **Próximas fases, nesta ordem:** 6 (cronograma) → 3 (editor) → 4 (chat com o Claude) → 5 (métricas) → 7 (acabamento).
@@ -302,7 +310,7 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - `Start-Process -WindowStyle Hidden` esconde a janela do pywebview; para testar, abra com `pythonw.exe` normalmente.
 
 ### Testes
-- `cd estudio` e depois `py -3.12 -m pytest testes -q`. São 166 testes (a 1C trouxe `test_fase1c.py`; a Fase 2 trouxe `test_explorador.py`; o plano B do trecho entrou em `test_trecho.py`; ao todo inclui `test_trecho.py`: vídeos DASH gerados no PC + yt-dlp falso que responde a `Range`). A 1B testa a fila com um `YoutubeDL` falso (`test_fase1b.py`, classe `YDLFalso`), que segura o download até o teste liberar. A 1A tem 48 testes: plataformas, erros, config, qualidades, opções do yt-dlp, leitores de legenda, palavras, `.md`/`.json`, divisão com ffmpeg real, leitura de áudio, queda para CPU e estimativa de tamanho com o seletor real do yt-dlp).
+- `cd estudio` e depois `py -3.12 -m pytest testes -q`. São 168 testes (a 1C trouxe `test_fase1c.py`; a Fase 2 trouxe `test_explorador.py`; o plano B do trecho entrou em `test_trecho.py`; ao todo inclui `test_trecho.py`: vídeos DASH gerados no PC + yt-dlp falso que responde a `Range`). A 1B testa a fila com um `YoutubeDL` falso (`test_fase1b.py`, classe `YDLFalso`), que segura o download até o teste liberar. A 1A tem 48 testes: plataformas, erros, config, qualidades, opções do yt-dlp, leitores de legenda, palavras, `.md`/`.json`, divisão com ffmpeg real, leitura de áudio, queda para CPU e estimativa de tamanho com o seletor real do yt-dlp).
 - Interface sem o Python: `.claude/launch.json` → "interface-estudio" (servidor estático) e um `window.pywebview.api` falso no console.
 - Testado de verdade na 1A: prévia + download do YouTube (720p, estimativa de 476 KB contra 475 KB reais), `.md`/`.json` pela legenda, Whisper `tiny` com tempo de cada palavra (caindo para a CPU), Modo Claude dividindo em 2 partes e a janela abrindo com o config antigo importado.
 
