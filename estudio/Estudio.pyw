@@ -28,7 +28,23 @@ except ImportError as e:
     avisar_e_sair(f"Falta instalar uma parte do Estúdio ({e.name}).\n\n"
                   "Dê dois cliques no instalar.bat (pasta estudio) e abra de novo.")
 
-from ponte import Ponte  # noqa: E402
+TITULO = "Estúdio ViceCityDay"
+
+
+def perguntar(texto):
+    """Caixa Sim/Não. True = Sim."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    return ctypes.windll.user32.MessageBoxW(None, texto, TITULO, 0x4 | 0x30) == 6  # MB_YESNO|MB_ICONWARNING
+
+
+def avisar(texto):
+    if os.name == "nt":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, texto, TITULO, 0x30)
+    else:
+        print(texto)
 
 
 def main():
@@ -38,9 +54,23 @@ def main():
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
             pass
+    # Só um Estúdio aberto: se já houver outro, a janela dele vem para a frente e este sai.
+    from nucleo.config import pasta_dados
+    from nucleo.sistema import TravaInstancia, abrir_ou_trazer
+    trava = TravaInstancia(pasta_dados())
+    if not abrir_ou_trazer(trava, perguntar, avisar, titulo=TITULO):
+        sys.exit(0)
+    try:
+        abrir_janela()
+    finally:
+        trava.soltar()
+
+
+def abrir_janela():
+    from ponte import Ponte
     ponte = Ponte()
     janela = webview.create_window(
-        "Estúdio ViceCityDay",
+        TITULO,
         url=str(PASTA / "interface" / "index.html"),
         js_api=ponte,
         width=1220, height=800, min_size=(900, 620),
