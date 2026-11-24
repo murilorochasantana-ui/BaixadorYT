@@ -58,7 +58,22 @@ def _pasta_navegador():
     from nucleo.config import pasta_dados
     p = pasta_dados() / "navegador"
     p.mkdir(exist_ok=True)
+    _limpar_cache_navegador(p)
     return p
+
+
+def _limpar_cache_navegador(pasta):
+    """Apaga o cache HTTP do WebView2 antes de abrir.
+
+    A página vem sempre do mesmo endereço (http://127.0.0.1:42001/index.html) e o WebView2 guardava
+    index.html/app.js em cache: depois de uma atualização a janela continuava mostrando a tela antiga
+    (24/11: a aba "Voz" não aparecia). As páginas são locais, então não perder nada com isso.
+    Os dados do usuário (Local Storage, cookies) ficam em outras pastas e não são tocados.
+    """
+    import shutil
+    padrao = pasta / "EBWebView" / "Default"
+    for sub in ("Cache", "Code Cache"):
+        shutil.rmtree(padrao / sub, ignore_errors=True)  # em uso por outra janela aberta: segue sem apagar
 
 
 if __name__ == "__main__":
