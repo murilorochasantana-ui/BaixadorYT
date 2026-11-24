@@ -16,6 +16,7 @@ import yt_dlp
 
 from nucleo import config
 from nucleo import explorador
+from nucleo import vozlocal
 from nucleo.controle import Interrompido
 from nucleo.downloads import Gerenciador, Pedido
 from nucleo.erros import explicar_erro, limpar_mensagem
@@ -413,3 +414,18 @@ class Ponte:
             mostrar_no_explorer(caminho)
             return True
         return False
+
+    # ---------- aba Voz (VozLocal, gerador de voz offline à parte) ----------
+    def _pasta_vozlocal(self):
+        return self._cfg.get("pasta_vozlocal") or vozlocal.PASTA_PADRAO
+
+    def voz_estado(self):
+        return vozlocal.estado(self._pasta_vozlocal())
+
+    def voz_ligar(self):
+        return vozlocal.ligar(self._pasta_vozlocal())
+
+    def voz_no_navegador(self):
+        import webbrowser
+        webbrowser.open(vozlocal.url())
+        return True

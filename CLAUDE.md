@@ -296,6 +296,22 @@ Plano completo aprovado (Fase 0): `C:\Users\muril\.claude\plans\c-users-muril-do
 - **Plano B lento:** mostra MB, MB/s e quanto falta, medindo o `ytdlp.*.part`. Depois de `ESPERA_OFERTA` (20 s), se for demorar mais de 5 min, o item da fila ganha o botão "⬇ Baixar inteiro e cortar" (evento `oferta_inteiro`, `Ponte.baixar_inteiro` → `Trecho.quer_inteiro`). Ele encerra o ffmpeg do yt-dlp e cai no `_inteiro`.
 - `matar_ffmpegs_filhos(contendo=pasta_tmp)` só encerra os ffmpeg daquele download. Antes, cancelar um plano B derrubava os ffmpeg dos outros downloads em paralelo.
 
+### Aba "Voz" (24/11/2026): VozLocal dentro do Estúdio
+- O **VozLocal** (texto em voz 100% offline: Kokoro agora, Chatterbox com clonagem depois) é um **projeto à parte** em
+  `D:\VozLocal`, com git, venv (PyTorch) e `CLAUDE.md` próprios. **Não copiar o código dele para cá**: o Estúdio só liga o
+  programa e mostra a página.
+- `nucleo/vozlocal.py`: `ligar(pasta)` reaproveita o VozLocal se ele já estiver aberto (o `GET /config` do Gradio com
+  `title == "VozLocal"`). Senão, roda `D:\VozLocal\.venv\Scripts\python.exe app.py --sem-navegador` escondido
+  (`CREATE_NO_WINDOW`, `GRADIO_SERVER_PORT=7860`) e espera até 120 s. Se outro programa estiver na porta 7860, ou se
+  faltar instalar, a mensagem explica o que fazer. Um `atexit` desliga (`taskkill /T`) só o que o Estúdio ligou: o
+  VozLocal aberto pelo atalho continua.
+- `config.pasta_vozlocal` (padrão `D:\VozLocal`). `Ponte.voz_estado`, `voz_ligar` e `voz_no_navegador`.
+- Interface: botão "🎙️ Voz" abaixo de Arquivos. A `#tela-voz` tem um `iframe` (`?__theme=dark`,
+  `allow="autoplay; clipboard-*"`). O `js/voz.js` fica todo dentro de uma IIFE (sem globais), e a mensagem de erro entra
+  por `textContent`.
+- Testado: liga em ~6 s e desliga sem sobrar processo; aba no Chromium com o VozLocal real dentro; a tela de erro mostra
+  HTML como texto. `testes/test_vozlocal.py` (6). Total: 174.
+
 ## Modelo do Claude por fase (regra do usuário)
 **Cada fase começa numa sessão NOVA do Claude Code, já aberta com o modelo certo** (não continuar uma fase na sessão da anterior). No fim de cada fase, lembrar em destaque qual modelo usar na próxima.
 **Próximas fases, nesta ordem:** 6 (cronograma) → 3 (editor) → 4 (chat com o Claude) → 5 (métricas) → 7 (acabamento).

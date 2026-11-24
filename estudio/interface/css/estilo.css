@@ -249,3 +249,17 @@ audio.prev-midia { background: none; max-height: none; }
 .modal-caixa { width: min(520px, 92vw); background: var(--cartao); border: 1px solid var(--borda); border-radius: 12px; padding: 20px; }
 .modal-caixa h3 { margin: 0 0 10px; }
 #modal-texto { white-space: pre-wrap; color: var(--texto); }
+
+/* ---------- aba Voz (VozLocal dentro da janela) ---------- */
+#tela-voz.ativa { display: flex; flex-direction: column; height: calc(100vh - 48px); }
+.voz-topo { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.voz-topo .cabecalho { margin-bottom: 12px; }
+.voz-topo .cabecalho p { margin: 6px 0 0; }
+.voz-acoes { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.voz-quadro { flex: 1; width: 100%; border: 1px solid var(--borda); border-radius: 12px; background: var(--cartao); }
+.voz-aviso {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  border: 1px dashed var(--borda); border-radius: 12px; color: var(--suave); text-align: center; padding: 24px;
+  white-space: pre-line;
+}
+.voz-aviso p { max-width: 520px; margin: 0; line-height: 1.5; }

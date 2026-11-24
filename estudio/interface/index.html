@@ -14,6 +14,7 @@
     </div>
     <button class="aba ativa" data-aba="baixar">⬇<span>Baixar</span></button>
     <button class="aba" data-aba="arquivos">📁<span>Arquivos</span></button>
+    <button class="aba" data-aba="voz">🎙️<span>Voz</span></button>
     <button class="aba" data-aba="cronograma">📅<span>Cronograma</span></button>
     <button class="aba" data-aba="editor">✂️<span>Editor</span></button>
     <button class="aba" data-aba="chat">💬<span>Claude</span></button>
@@ -149,6 +150,24 @@
         </div>
       </div>
     </section>
+    <section class="tela" id="tela-voz">
+      <div class="voz-topo">
+        <div class="cabecalho">
+          <h1>🎙️ Voz</h1>
+          <p class="suave">Texto em voz no seu PC, sem internet e sem créditos (VozLocal).</p>
+        </div>
+        <div class="voz-acoes">
+          <span id="voz-status" class="selo">Desligado</span>
+          <button id="voz-recarregar" class="btn cinza" title="Recarregar o VozLocal">↻</button>
+          <button id="voz-navegador" class="btn cinza">🌐 Abrir no navegador</button>
+        </div>
+      </div>
+      <div id="voz-aviso" class="voz-aviso">
+        <p id="voz-aviso-texto">Ligando o VozLocal…</p>
+        <button id="voz-tentar" class="btn destaque escondido">Tentar de novo</button>
+      </div>
+      <iframe id="voz-quadro" class="voz-quadro escondido" title="VozLocal" allow="autoplay; clipboard-read; clipboard-write"></iframe>
+    </section>
     <section class="tela" id="tela-cronograma"><div class="em-breve"><h1>📅 Cronograma</h1><p>Calendário com arrastar e soltar e postagem no YouTube e no TikTok.</p><span class="selo">Chega na Fase 6</span></div></section>
     <section class="tela" id="tela-editor"><div class="em-breve"><h1>✂️ Editor</h1><p>Cortar, vertical 9:16 e Modelo ViceCityDay com um clique.</p><span class="selo">Chega na Fase 3</span></div></section>
     <section class="tela" id="tela-chat"><div class="em-breve"><h1>💬 Claude</h1><p>Converse com o Claude e peça cortes, títulos e agendamentos.</p><span class="selo">Chega na Fase 4</span></div></section>
@@ -166,5 +185,6 @@
 
   <script src="js/app.js"></script>
   <script src="js/explorador.js"></script>
+  <script src="js/voz.js"></script>
 </body>
 </html>

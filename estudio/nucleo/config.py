@@ -37,6 +37,7 @@ PADRAO = {
     "downloads_paralelos": 2,      # quantos baixam ao mesmo tempo (1 a 4)
     "miniatura": True,             # salva a capa do vídeo em .jpg ao lado
     "notificacao": True,           # aviso do Windows quando um download termina
+    "pasta_vozlocal": r"D:\VozLocal",  # gerador de voz offline (projeto à parte), aba "Voz"
 }
 
 # chaves que podem ser trocadas pela interface
